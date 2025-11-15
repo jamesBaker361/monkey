@@ -1,0 +1,10 @@
+diffusers
+torch
+accelerate
+wandb
+matplotlib
+torchvision
+controlnet-aux
+pillow
+trl
+numpy
