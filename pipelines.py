@@ -1,4 +1,3 @@
-from trl import DDPOConfig, DDPOTrainer, DefaultDDPOStableDiffusionPipeline,DDPOPipelineOutput,DDPOStableDiffusionPipeline
 from diffusers import DiffusionPipeline,LatentConsistencyModelPipeline
 from diffusers.pipelines.latent_consistency_models.pipeline_latent_consistency_text2img import retrieve_timesteps
 import torch
@@ -871,41 +870,6 @@ class CompatibleLatentConsistencyModelPipeline(LatentConsistencyModelPipeline):
         return unet_parameters,other_parameters
 
 
-class KeywordDDPOStableDiffusionPipeline(DefaultDDPOStableDiffusionPipeline):
-    def __init__(self,sd_pipeline:CompatibleLatentConsistencyModelPipeline,keywords:set,use_lora:bool=False,output_type:str="pt",gradient_checkpoint: bool = True,textual_inversion:bool=False):
-        self.sd_pipeline=sd_pipeline
-        self.keywords=keywords
-        self.use_lora=use_lora
-        self.output_type=output_type
-        self.gradient_checkpoint=gradient_checkpoint
-        self.textual_inversion=textual_inversion
-        for layer in self.get_trainable_layers():
-            layer.requires_grad_(True)
-
-    def get_trainable_layers(self):
-        ret=[]
-        if self.textual_inversion:
-            text_params=[p for _,p in self.sd_pipeline.text_encoder.named_parameters() if p.requires_grad]
-            print("len text parpams",len(text_params))
-            ret+=text_params
-        unet_parameters,other_parameters=self.sd_pipeline.get_trainable_layers()
-        print('len(unet_parameters)',len(unet_parameters))
-        if len(self.keywords)==0:
-            ret+= [p for _,p in unet_parameters if p.requires_grad]
-        for key in self.keywords:
-            for name,p in unet_parameters:
-                if name.find(key)!=-1 and p.requires_grad:
-                    ret.append(p)
-        return ret+other_parameters
-
-    def rgb_with_grad(self,*args,**kwargs):
-        #print("rgb with grad",len(find_cuda_objects()))
-        kwargs["output_type"]=self.output_type
-        kwargs["gradient_checkpoint"]=self.gradient_checkpoint
-        if type(self.sd_pipeline)==CompatibleLatentConsistencyModelPipeline:
-            return self.sd_pipeline.call_with_grad(*args,**kwargs)
-        else:
-            return super().rgb_with_grad(*args,**kwargs)
         
 class CompatibleStableDiffusionPipeline(StableDiffusionPipeline):
     def call_with_grad(self, 
