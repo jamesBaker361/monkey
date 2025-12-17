@@ -109,6 +109,7 @@ def main(args):
 
     # Apply as alpha (translucent mask)
     masked_img=Image.blend(color_rgba, mask_pil, 0.5)
+    masked_img.save("first.png")
 
 if __name__=='__main__':
     print_details()
