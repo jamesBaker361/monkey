@@ -2,7 +2,7 @@ import torch
 from diffusers import StableDiffusionPipeline
 from PIL import Image
 import gc
-from controlnet_aux import SamDetector
+#from controlnet_aux import SamDetector
 import os
 import sys
 sys.path.append(os.path.dirname(__file__))
@@ -14,7 +14,7 @@ from PIL import Image
 from diffusers.loaders.ip_adapter import IPAdapterMixin
 
 # Load human segmentation preprocessor
-sam =  SamDetector.from_pretrained("ybelkada/segment-anything", subfolder="checkpoints")
+#sam =  SamDetector.from_pretrained("ybelkada/segment-anything", subfolder="checkpoints")
 
 
 
@@ -46,7 +46,7 @@ from diffusers.loaders.unet_loader_utils import _maybe_expand_lora_scales
 
 
 
-sam =  SamDetector.from_pretrained("ybelkada/segment-anything", subfolder="checkpoints")
+#sam =  SamDetector.from_pretrained("ybelkada/segment-anything", subfolder="checkpoints")
 
 big_global_dict={}
 big_global_ip_dict={}
