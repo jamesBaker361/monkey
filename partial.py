@@ -77,7 +77,7 @@ def main(args):
 
     # Load IP-Adapter
     pipe.load_ip_adapter("h94/IP-Adapter", subfolder="models", weight_name="ip-adapter_sd15.bin")
-    set_ip_adapter_scale_monkey(pipe,1.0)
+    set_ip_adapter_scale_monkey(pipe,0.5)
 
     setattr(pipe,"safety_checker",None)
 
@@ -91,25 +91,26 @@ def main(args):
     
     
     initial_image=pipe(" ",args.dim,args.dim,args.initial_steps,ip_adapter_image=ip_adapter_image,generator=generator).images[0]
-    
-    mask=sum([get_mask(args.layer_index,attn_list,step,args.token,args.dim,args.threshold) for step in args.initial_mask_step_list])
-    tiny_mask=mask.clone()
-    tiny_mask_pil=to_pil_image(1-tiny_mask)
-    #print("mask size",mask.size())
-
-    mask=F.interpolate(mask.unsqueeze(0).unsqueeze(0), size=(args.dim, args.dim), mode="nearest").squeeze(0).squeeze(0)
-
-    
-
-    mask_pil=to_pil_image(1-mask)
     color_rgba = initial_image.convert("RGB")
-    mask_pil = mask_pil.convert("RGB")  # must be single channel for alpha
+    for token in [0,1,2,3]:
+        mask=sum([get_mask(args.layer_index,attn_list,step,token,args.dim,args.threshold) for step in args.initial_mask_step_list])
+        tiny_mask=mask.clone()
+        tiny_mask_pil=to_pil_image(1-tiny_mask)
+        #print("mask size",mask.size())
 
-    #print(mask.size,color_rgba.size)
+        mask=F.interpolate(mask.unsqueeze(0).unsqueeze(0), size=(args.dim, args.dim), mode="nearest").squeeze(0).squeeze(0)
 
-    # Apply as alpha (translucent mask)
-    masked_img=Image.blend(color_rgba, mask_pil, 0.5)
-    masked_img.save("first.png")
+        
+
+        mask_pil=to_pil_image(1-mask)
+        
+        mask_pil = mask_pil.convert("RGB")  # must be single channel for alpha
+
+        #print(mask.size,color_rgba.size)
+
+        # Apply as alpha (translucent mask)
+        masked_img=Image.blend(color_rgba, mask_pil, 0.5)
+        masked_img.save(f"first_{token}.png")
 
 if __name__=='__main__':
     print_details()
