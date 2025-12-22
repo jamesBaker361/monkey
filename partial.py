@@ -77,11 +77,12 @@ def main(args):
 
     # Load IP-Adapter
     pipe.load_ip_adapter("h94/IP-Adapter", subfolder="models", weight_name="ip-adapter_sd15.bin")
-    set_ip_adapter_scale_monkey(pipe,0.5)
+    
 
     setattr(pipe,"safety_checker",None)
 
     insert_monkey(pipe)
+    set_ip_adapter_scale_monkey(pipe,0.5)
     attn_list=get_modules_of_types(pipe.unet,Attention)
     
     generator=torch.Generator()
@@ -90,7 +91,7 @@ def main(args):
     ip_adapter_image=load_image("https://assetsio.gnwcdn.com/ASTARION-bg3-crop.jpg?width=1200&height=1200&fit=crop&quality=100&format=png&enable=upscale&auto=webp")
     
     
-    initial_image=pipe(" character walking ",args.dim,args.dim,args.initial_steps,ip_adapter_image=ip_adapter_image,generator=generator).images[0]
+    initial_image=pipe(" character in france ",args.dim,args.dim,args.initial_steps,ip_adapter_image=ip_adapter_image,generator=generator).images[0]
     color_rgba = initial_image.convert("RGB")
     for token in [0,1,2,3]:
         mask=sum([get_mask(args.layer_index,attn_list,step,token,args.dim,args.threshold) for step in args.initial_mask_step_list])
