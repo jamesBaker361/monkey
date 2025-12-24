@@ -84,6 +84,7 @@ def main(args):
     insert_monkey(pipe)
     set_ip_adapter_scale_monkey(pipe,0.5)
     attn_list=get_modules_of_types(pipe.unet,Attention)
+    reset_monkey(pipe)
     
     generator=torch.Generator()
     generator.manual_seed(123)
@@ -92,26 +93,29 @@ def main(args):
     
     
     initial_image=pipe(" on a cobblestone street ",args.dim,args.dim,args.initial_steps,ip_adapter_image=ip_adapter_image,generator=generator).images[0]
+    
+    initial_image.save("initial.png")
     color_rgba = initial_image.convert("RGB")
-    for token in [0,1,2,3]:
-        mask=sum([get_mask(args.layer_index,attn_list,step,token,args.dim,args.threshold) for step in args.initial_mask_step_list])
-        tiny_mask=mask.clone()
-        tiny_mask_pil=to_pil_image(1-tiny_mask)
-        #print("mask size",mask.size())
+    for layer in range(len(attn_list)):
+        image_list=[]
+        for token in [0,1,2,3]:
+            mask=sum([get_mask(layer,attn_list,step,token,args.dim,args.threshold) for step in args.initial_mask_step_list])
+            tiny_mask=mask.clone()
+            tiny_mask_pil=to_pil_image(1-tiny_mask)
+            #print("mask size",mask.size())
 
-        mask=F.interpolate(mask.unsqueeze(0).unsqueeze(0), size=(args.dim, args.dim), mode="nearest").squeeze(0).squeeze(0)
+            mask=F.interpolate(mask.unsqueeze(0).unsqueeze(0), size=(args.dim, args.dim), mode="nearest").squeeze(0).squeeze(0)
 
-        
+            mask_pil=to_pil_image(1-mask)
+            
+            mask_pil = mask_pil.convert("RGB")  # must be single channel for alpha
 
-        mask_pil=to_pil_image(1-mask)
-        
-        mask_pil = mask_pil.convert("RGB")  # must be single channel for alpha
+            #print(mask.size,color_rgba.size)
 
-        #print(mask.size,color_rgba.size)
-
-        # Apply as alpha (translucent mask)
-        masked_img=Image.blend(color_rgba, mask_pil, 0.5)
-        masked_img.save(f"first_{token}.png")
+            # Apply as alpha (translucent mask)
+            masked_img=Image.blend(color_rgba, mask_pil, 0.5)
+            image_list.append(masked_img)
+        concat_images_horizontally(image_list).save(f"pic_{layer}".png)
 
 if __name__=='__main__':
     print_details()
