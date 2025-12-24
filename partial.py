@@ -90,8 +90,6 @@ def main(args):
     generator.manual_seed(123)
     
     ip_adapter_image=load_image("https://assetsio.gnwcdn.com/ASTARION-bg3-crop.jpg?width=1200&height=1200&fit=crop&quality=100&format=png&enable=upscale&auto=webp")
-    print(attn_list)
-    exit(0)
     
     initial_image=pipe(" on a cobblestone street ",args.dim,args.dim,args.initial_steps,ip_adapter_image=ip_adapter_image,generator=generator).images[0]
     
@@ -101,24 +99,27 @@ def main(args):
     
     for layer in range(len(attn_list)):
         image_list=[]
-        for token in [0,1,2,3]:
-            mask=sum([get_mask(layer,attn_list,step,token,args.dim,args.threshold) for step in args.initial_mask_step_list])
-            tiny_mask=mask.clone()
-            tiny_mask_pil=to_pil_image(1-tiny_mask)
-            #print("mask size",mask.size())
+        try:
+            for token in [0,1,2,3]:
+                mask=sum([get_mask(layer,attn_list,step,token,args.dim,args.threshold) for step in args.initial_mask_step_list])
+                tiny_mask=mask.clone()
+                tiny_mask_pil=to_pil_image(1-tiny_mask)
+                #print("mask size",mask.size())
 
-            mask=F.interpolate(mask.unsqueeze(0).unsqueeze(0), size=(args.dim, args.dim), mode="nearest").squeeze(0).squeeze(0)
+                mask=F.interpolate(mask.unsqueeze(0).unsqueeze(0), size=(args.dim, args.dim), mode="nearest").squeeze(0).squeeze(0)
 
-            mask_pil=to_pil_image(1-mask)
-            
-            mask_pil = mask_pil.convert("RGB")  # must be single channel for alpha
+                mask_pil=to_pil_image(1-mask)
+                
+                mask_pil = mask_pil.convert("RGB")  # must be single channel for alpha
 
-            #print(mask.size,color_rgba.size)
+                #print(mask.size,color_rgba.size)
 
-            # Apply as alpha (translucent mask)
-            masked_img=Image.blend(color_rgba, mask_pil, 0.5)
-            image_list.append(masked_img)
-        concat_images_horizontally(image_list).save(f"pic_{layer}.png")
+                # Apply as alpha (translucent mask)
+                masked_img=Image.blend(color_rgba, mask_pil, 0.5)
+                image_list.append(masked_img)
+            concat_images_horizontally(image_list).save(f"pic_{layer}.png")
+        except:
+            print("doesnt work for ",layer)
 
 if __name__=='__main__':
     print_details()
