@@ -20,7 +20,7 @@ from image_utils import concat_images_horizontally
 from PIL import Image
 from torchvision.transforms.functional import to_pil_image
 from transformers import AutoProcessor, CLIPModel
-from pipelines import CompatibleLatentConsistencyModelPipeline
+from pipelines import CompatibleLatentConsistencyModelPipeline,retrieve_timesteps
 #import ImageReward as RM
 from eval_helpers import DinoMetric
 
@@ -75,6 +75,10 @@ def main(args):
             "SimianLuo/LCM_Dreamshaper_v7",
             #torch_dtype=torch.float16,
     ).to(accelerator.device)
+    
+    timesteps=retrieve_timesteps(pipe.scheduler,4)
+    print(pipe.scheduler)
+    print(timesteps)
 
     # Load IP-Adapter
     weight_name={
