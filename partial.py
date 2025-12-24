@@ -76,7 +76,7 @@ def main(args):
     ).to(accelerator.device)
 
     # Load IP-Adapter
-    pipe.load_ip_adapter("h94/IP-Adapter", subfolder="models", weight_name="ip-adapter_sd15.bin")
+    pipe.load_ip_adapter("h94/IP-Adapter", subfolder="models", weight_name="ip-adapter-full-face_sd15.bin")
     
 
     setattr(pipe,"safety_checker",None)
