@@ -16,7 +16,7 @@ from diffusers.image_processor import IPAdapterMaskProcessor
 sys.path.append(os.path.dirname(__file__))
 from ipattn import MonkeyIPAttnProcessor, get_modules_of_types,reset_monkey,insert_monkey, set_ip_adapter_scale_monkey
 import torch
-from image_utils import concat_images_horizontally
+from image_utils import concat_images_horizontally,concat_images_vertically
 from PIL import Image
 from torchvision.transforms.functional import to_pil_image
 from transformers import AutoProcessor, CLIPModel
@@ -99,6 +99,9 @@ def main(args):
     generator.manual_seed(123)
     
     ip_adapter_image=load_image("https://assetsio.gnwcdn.com/ASTARION-bg3-crop.jpg?width=1200&height=1200&fit=crop&quality=100&format=png&enable=upscale&auto=webp")
+    target_image=load_image("https://bg3.wiki/w/images/1/1b/Portrait_Astarion.png")
+    target_image=pipe.image_processor.preprocess(target_image,args.dim,args.dim)[0]
+    latent_dist=pipe.vae.encode(target_image).latent_dist
     
     initial_image=pipe(" on a cobblestone street ",args.dim,args.dim,args.initial_steps,ip_adapter_image=ip_adapter_image,generator=generator).images[0]
     
@@ -106,29 +109,50 @@ def main(args):
     color_rgba = initial_image.convert("RGB")
     
     
-    for layer in range(len(attn_list)):
-        image_list=[]
-        try:
-            for token in [0,1,2,3]:
-                mask=sum([get_mask(layer,attn_list,step,token,args.dim,args.threshold) for step in args.initial_mask_step_list])
-                tiny_mask=mask.clone()
-                tiny_mask_pil=to_pil_image(1-tiny_mask)
-                #print("mask size",mask.size())
+    mask_list_list=[
+        [0,1],
+        [0],
+        [0]
+    ]
+    offset_list=[
+        1,2,3
+    ]
+    for z,(mask_list,offset) in enumerate( zip(mask_list_list,offset_list)):
+        reset_monkey(pipe)
+        generator=torch.Generator()
+        generator.manual_seed(123)
+        noise_level=timesteps[offset]
+        latents=latent_dist.sample()
+        noisy_latents=pipe.scheduler.add_noise(latents,torch.randn_like(latents),noise_level)
+        initial_image=pipe(" on a cobblestone street ",args.dim,args.dim,args.initial_steps,
+                           ip_adapter_image=ip_adapter_image,generator=generator,timesteps=timesteps[offset:],latents=noisy_latents).images[0]
+    
+        initial_image.save(f"initial_{z}.png")
+        vertical_image_list=[]
+        for layer in range(len(attn_list)):
+            image_list=[]
+            try:
+                for token in [0,1,2,3]:
+                    mask=sum([get_mask(layer,attn_list,step,token,args.dim,args.threshold) for step in mask_list])
+                    tiny_mask=mask.clone()
+                    tiny_mask_pil=to_pil_image(1-tiny_mask)
+                    #print("mask size",mask.size())
 
-                mask=F.interpolate(mask.unsqueeze(0).unsqueeze(0), size=(args.dim, args.dim), mode="nearest").squeeze(0).squeeze(0)
+                    mask=F.interpolate(mask.unsqueeze(0).unsqueeze(0), size=(args.dim, args.dim), mode="nearest").squeeze(0).squeeze(0)
 
-                mask_pil=to_pil_image(1-mask)
-                
-                mask_pil = mask_pil.convert("RGB")  # must be single channel for alpha
+                    mask_pil=to_pil_image(1-mask)
+                    
+                    mask_pil = mask_pil.convert("RGB")  # must be single channel for alpha
 
-                #print(mask.size,color_rgba.size)
+                    #print(mask.size,color_rgba.size)
 
-                # Apply as alpha (translucent mask)
-                masked_img=Image.blend(color_rgba, mask_pil, 0.5)
-                image_list.append(masked_img)
-            concat_images_horizontally(image_list).save(f"pic_{layer}.png")
-        except:
-            print("doesnt work for ",layer)
+                    # Apply as alpha (translucent mask)
+                    masked_img=Image.blend(color_rgba, mask_pil, 0.5)
+                    image_list.append(masked_img)
+                vertical_image_list.append(concat_images_horizontally(image_list))
+            except:
+                print("doesnt work for ",layer)
+        concat_images_vertically(vertical_image_list).save(f"veritcal_{z}.png")
 
 if __name__=='__main__':
     print_details()
