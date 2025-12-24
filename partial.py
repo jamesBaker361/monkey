@@ -34,6 +34,7 @@ parser.add_argument("--final_steps",type=int,default=8, help="how many steps for
 parser.add_argument("--final_mask_steps_list",nargs="*",help="steps to apply mask from",type=int)
 parser.add_argument("--final_adapter_steps_list",nargs="*",help="steps to apply adapter for (regardless of mask)",type=int)
 parser.add_argument("--threshold",type=float,default=0.5,help="threshold for mask")
+parser.add_argument("--ip_weight_name",type=str,default="base",help="base or face")
 
 def get_mask(layer_index:int, 
              attn_list:list,step:int,
@@ -76,7 +77,11 @@ def main(args):
     ).to(accelerator.device)
 
     # Load IP-Adapter
-    pipe.load_ip_adapter("h94/IP-Adapter", subfolder="models", weight_name="ip-adapter-full-face_sd15.bin")
+    weight_name={
+        "face":"ip-adapter-full-face_sd15.bin",
+        "base":"ip-adapter_sd15.bin"
+    }[args.ip_weight_name]
+    pipe.load_ip_adapter("h94/IP-Adapter", subfolder="models", weight_name=weight_name)
     
 
     setattr(pipe,"safety_checker",None)
