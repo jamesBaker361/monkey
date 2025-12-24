@@ -100,7 +100,7 @@ def main(args):
     
     ip_adapter_image=load_image("https://assetsio.gnwcdn.com/ASTARION-bg3-crop.jpg?width=1200&height=1200&fit=crop&quality=100&format=png&enable=upscale&auto=webp")
     target_image=load_image("https://bg3.wiki/w/images/1/1b/Portrait_Astarion.png")
-    target_image=pipe.image_processor.preprocess(target_image,args.dim,args.dim)
+    target_image=pipe.image_processor.preprocess(target_image,args.dim,args.dim).to(vae.device)
     latent_dist=pipe.vae.encode(target_image).latent_dist
     
     initial_image=pipe(" on a cobblestone street ",args.dim,args.dim,args.initial_steps,ip_adapter_image=ip_adapter_image,generator=generator).images[0]
