@@ -115,7 +115,7 @@ def main(args):
             # Apply as alpha (translucent mask)
             masked_img=Image.blend(color_rgba, mask_pil, 0.5)
             image_list.append(masked_img)
-        concat_images_horizontally(image_list).save(f"pic_{layer}".png)
+        concat_images_horizontally(image_list).save(f"pic_{layer}.png")
 
 if __name__=='__main__':
     print_details()
