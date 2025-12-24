@@ -90,12 +90,15 @@ def main(args):
     generator.manual_seed(123)
     
     ip_adapter_image=load_image("https://assetsio.gnwcdn.com/ASTARION-bg3-crop.jpg?width=1200&height=1200&fit=crop&quality=100&format=png&enable=upscale&auto=webp")
-    
+    print(attn_list)
+    exit(0)
     
     initial_image=pipe(" on a cobblestone street ",args.dim,args.dim,args.initial_steps,ip_adapter_image=ip_adapter_image,generator=generator).images[0]
     
     initial_image.save("initial.png")
     color_rgba = initial_image.convert("RGB")
+    
+    
     for layer in range(len(attn_list)):
         image_list=[]
         for token in [0,1,2,3]:
