@@ -100,6 +100,7 @@ def main(args):
     
     ip_adapter_image=load_image("https://assetsio.gnwcdn.com/ASTARION-bg3-crop.jpg?width=1200&height=1200&fit=crop&quality=100&format=png&enable=upscale&auto=webp")
     target_image=load_image("https://bg3.wiki/w/images/1/1b/Portrait_Astarion.png")
+    target_image=load_image("https://static0.srcdn.com/wordpress/wp-content/uploads/2024/06/baldur-s-gate-3-shadowheart-astarion-karlach.jpg")
     target_image=pipe.image_processor.preprocess(target_image,args.dim,args.dim).to(pipe.vae.device)
     latent_dist=pipe.vae.encode(target_image).latent_dist
     
