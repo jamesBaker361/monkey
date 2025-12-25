@@ -76,7 +76,7 @@ def main(args):
             #torch_dtype=torch.float16,
     ).to(accelerator.device)
     
-    timesteps=retrieve_timesteps(pipe.scheduler,4)
+    timesteps,num_inference_steps=retrieve_timesteps(pipe.scheduler,4)
     print(pipe.scheduler)
     print(timesteps)
 
@@ -100,7 +100,7 @@ def main(args):
     
     ip_adapter_image=load_image("https://assetsio.gnwcdn.com/ASTARION-bg3-crop.jpg?width=1200&height=1200&fit=crop&quality=100&format=png&enable=upscale&auto=webp")
     target_image=load_image("https://bg3.wiki/w/images/1/1b/Portrait_Astarion.png")
-    target_image=pipe.image_processor.preprocess(target_image,args.dim,args.dim).to(vae.device)
+    target_image=pipe.image_processor.preprocess(target_image,args.dim,args.dim).to(pipe.vae.device)
     latent_dist=pipe.vae.encode(target_image).latent_dist
     
     initial_image=pipe(" on a cobblestone street ",args.dim,args.dim,args.initial_steps,ip_adapter_image=ip_adapter_image,generator=generator).images[0]
@@ -121,7 +121,7 @@ def main(args):
         reset_monkey(pipe)
         generator=torch.Generator()
         generator.manual_seed(123)
-        noise_level=timesteps[offset]
+        noise_level=torch.tensor( timesteps[offset]).long()
         latents=latent_dist.sample()
         noisy_latents=pipe.scheduler.add_noise(latents,torch.randn_like(latents),noise_level)
         initial_image=pipe(" on a cobblestone street ",args.dim,args.dim,args.initial_steps,
@@ -150,8 +150,9 @@ def main(args):
                     masked_img=Image.blend(color_rgba, mask_pil, 0.5)
                     image_list.append(masked_img)
                 vertical_image_list.append(concat_images_horizontally(image_list))
-            except:
-                print("doesnt work for ",layer)
+            except Exception as e:
+                pass #print("doesnt work for ",layer,e)
+        print(len(vertical_image_list),"z= ",z)
         concat_images_vertically(vertical_image_list).save(f"veritcal_{z}.png")
 
 if __name__=='__main__':
