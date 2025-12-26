@@ -36,6 +36,11 @@ parser.add_argument("--final_adapter_steps_list",nargs="*",help="steps to apply 
 parser.add_argument("--threshold",type=float,default=0.5,help="threshold for mask")
 parser.add_argument("--ip_weight_name",type=str,default="base",help="base or face")
 
+def crop_center_square(img:Image.Image)->Image.Image:
+    w, h = img.size
+    s = min(w, h)
+    return img.crop(((w - s)//2, (h - s)//2, (w + s)//2, (h + s)//2))
+
 def get_mask(layer_index:int, 
              attn_list:list,step:int,
              token:int,dim:int,
@@ -101,6 +106,7 @@ def main(args):
     ip_adapter_image=load_image("https://assetsio.gnwcdn.com/ASTARION-bg3-crop.jpg?width=1200&height=1200&fit=crop&quality=100&format=png&enable=upscale&auto=webp")
     target_image=load_image("https://bg3.wiki/w/images/1/1b/Portrait_Astarion.png")
     target_image=load_image("https://static0.srcdn.com/wordpress/wp-content/uploads/2024/06/baldur-s-gate-3-shadowheart-astarion-karlach.jpg")
+    target_image=crop_center_square(target_image)
     target_image_pt=pipe.image_processor.preprocess(target_image,args.dim,args.dim).to(pipe.vae.device)
     latent_dist=pipe.vae.encode(target_image_pt).latent_dist
     
