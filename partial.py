@@ -148,7 +148,7 @@ def main(args):
                     #print(mask.size,color_rgba.size)
 
                     # Apply as alpha (translucent mask)
-                    masked_img=Image.blend(initial_image, mask_pil, 0.5)
+                    masked_img=Image.blend(target_image, mask_pil, 0.5)
                     image_list.append(masked_img)
                 vertical_image_list.append(concat_images_horizontally(image_list))
             except Exception as e:
