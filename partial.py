@@ -101,8 +101,8 @@ def main(args):
     ip_adapter_image=load_image("https://assetsio.gnwcdn.com/ASTARION-bg3-crop.jpg?width=1200&height=1200&fit=crop&quality=100&format=png&enable=upscale&auto=webp")
     target_image=load_image("https://bg3.wiki/w/images/1/1b/Portrait_Astarion.png")
     target_image=load_image("https://static0.srcdn.com/wordpress/wp-content/uploads/2024/06/baldur-s-gate-3-shadowheart-astarion-karlach.jpg")
-    target_image=pipe.image_processor.preprocess(target_image,args.dim,args.dim).to(pipe.vae.device)
-    latent_dist=pipe.vae.encode(target_image).latent_dist
+    target_image_pt=pipe.image_processor.preprocess(target_image,args.dim,args.dim).to(pipe.vae.device)
+    latent_dist=pipe.vae.encode(target_image_pt).latent_dist
     
     initial_image=pipe(" on a cobblestone street ",args.dim,args.dim,args.initial_steps,ip_adapter_image=ip_adapter_image,generator=generator).images[0]
     
@@ -148,7 +148,7 @@ def main(args):
                     #print(mask.size,color_rgba.size)
 
                     # Apply as alpha (translucent mask)
-                    masked_img=Image.blend(target_image, mask_pil, 0.5)
+                    masked_img=Image.blend(target_image.resize((args.dim,args.dim)), mask_pil, 0.5)
                     image_list.append(masked_img)
                 vertical_image_list.append(concat_images_horizontally(image_list))
             except Exception as e:
