@@ -81,9 +81,7 @@ def main(args):
             #torch_dtype=torch.float16,
     ).to(accelerator.device)
     
-    timesteps,num_inference_steps=retrieve_timesteps(pipe.scheduler,4)
-    print(pipe.scheduler)
-    print(timesteps)
+    
 
     # Load IP-Adapter
     weight_name={
@@ -115,16 +113,37 @@ def main(args):
     initial_image.save("initial.png")
     color_rgba = initial_image.convert("RGB")
     
+    timesteps,num_inference_steps=retrieve_timesteps(pipe.scheduler,args.initial_steps)
+    print(pipe.scheduler)
+    print(timesteps)
+
+    if args.initial_steps==4:
     
-    mask_list_list=[
-        [0,1],
-        [0],
-        [0]
-    ]
-    offset_list=[
-        1,2,3
-    ]
+        
+        mask_list_list=[
+            [0,1],
+            [0],
+            [0]
+        ]
+
+    elif args.initial_steps==8:
+        mask_list_list=[
+            [1,2,3,4],
+            [0,1,2,3],
+            [0,1,2],
+            [0,1],
+            [0],
+            [0],
+            [0]
+        ]
+    offset_list=[c for c in range(1, args.initial_steps)]
+    all_steps=[c for c in range(args.initial_steps)]
     for z,(mask_list,offset) in enumerate( zip(mask_list_list,offset_list)):
+        
+        _steps=[all_steps[offset:][s] for s in mask_list]
+        
+        print(f" offset {offset} steps {_steps} timesteps {timesteps[offset:]}")
+        
         reset_monkey(pipe)
         generator=torch.Generator()
         generator.manual_seed(123)
