@@ -110,7 +110,7 @@ def main(args):
     
     initial_image=pipe(" on a cobblestone street ",args.dim,args.dim,args.initial_steps,ip_adapter_image=ip_adapter_image,generator=generator).images[0]
     
-    initial_image.save("initial.png")
+    initial_image.save(f"{args.ip_weight_name}_{args.initial_steps}_initial.png")
     color_rgba = initial_image.convert("RGB")
     
     timesteps,num_inference_steps=retrieve_timesteps(pipe.scheduler,args.initial_steps)
@@ -153,7 +153,7 @@ def main(args):
         initial_image=pipe(" on a cobblestone street ",args.dim,args.dim,args.initial_steps,
                            ip_adapter_image=ip_adapter_image,generator=generator,timesteps=timesteps[offset:],latents=noisy_latents).images[0]
     
-        initial_image.save(f"initial_{z}.png")
+        initial_image.save(f"{args.ip_weight_name}_{args.initial_steps}_initial_{z}.png")
         vertical_image_list=[]
         for layer in range(len(attn_list)):
             image_list=[]
@@ -179,7 +179,7 @@ def main(args):
             except Exception as e:
                 pass #print("doesnt work for ",layer,e)
         print(len(vertical_image_list),"z= ",z)
-        concat_images_vertically(vertical_image_list).save(f"veritcal_{z}.png")
+        concat_images_vertically(vertical_image_list).save(f"{args.ip_weight_name}_{args.initial_steps}_veritcal_{z}.png")
 
 if __name__=='__main__':
     print_details()
