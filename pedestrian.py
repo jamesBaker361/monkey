@@ -132,8 +132,8 @@ def main(args):
                 y=int(args.resize_dim*y/img_y)
                 h=int(args.resize_dim *h/img_x)
                 w=int(args.resize_dim *w/img_y)
-            gallery_pt=pipe.image_processor.preprocess(gallery.to(pipe.vae.device))
-            latent_dist=pipe.vae.encode(gallery_pt).latent_dist
+            gallery_pt=pipe.image_processor.preprocess(gallery)
+            latent_dist=pipe.vae.encode(gallery_pt.to(pipe.vae.device)).latent_dist
             noise_level=torch.tensor( timesteps[args.offset]).long()
             latents=latent_dist.sample()
             noisy_latents=pipe.scheduler.add_noise(latents,torch.randn_like(latents),noise_level)
