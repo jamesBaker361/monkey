@@ -300,6 +300,7 @@ class MonkeyIPAttnProcessor(torch.nn.Module):
                         attn_weight = torch.softmax(attn_weight, dim=-1)
 
                         self.kv_ip.append(attn_weight)
+                        #print("added to kv ip" ,len(self.kv_ip))
                         _current_ip_hidden_states = _current_ip_hidden_states.to(query.dtype)
 
                         
@@ -393,3 +394,68 @@ def reset_monkey(pipe):
     attn_list=get_modules_of_types(pipe.unet,MonkeyIPAttnProcessor)
     for name,module in attn_list:
         module.reset()
+        
+def get_mask(layer_index:int, 
+             attn_list:list,step:int,
+             token:int,dim:int,
+             threshold:float,
+             kv_type:str="ip",
+             vae_scale:int=8):
+    #print("layer",layer_index)
+    module=attn_list[layer_index][1] #get the module no name
+    #module.processor.kv_ip
+    if kv_type=="ip":
+        processor_kv=module.processor.kv_ip
+    elif kv_type=="str":
+        processor_kv=module.processor.kv
+    size=processor_kv[step].size()
+    #print('\tprocessor_kv[step].size()',processor_kv[step].size())
+    
+    avg=processor_kv[step].mean(dim=1).squeeze(0)
+    #print("\t avg ", avg.size())
+    latent_dim=int (math.sqrt(avg.size()[0]))
+    #print("\tlatent",latent_dim)
+    avg=avg.view([latent_dim,latent_dim,-1])
+    #print("\t avg ", avg.size())
+    avg=avg[:,:,token]
+    #print("\t avg ", avg.size())
+    avg_min,avg_max=avg.min(),avg.max()
+    x_norm = (avg - avg_min) / (avg_max - avg_min)  # [0,1]
+    x_norm[x_norm < threshold]=0.
+    avg = (x_norm * 255)
+    #avg=F.interpolate(avg.unsqueeze(0).unsqueeze(0), size=(dim, dim), mode="nearest").squeeze(0).squeeze(0)
+
+    return avg
+
+def get_mask_rect(layer_index:int, 
+             attn_list:list,step:int,
+             token:int,dim:int,
+             threshold:float,
+             kv_type:str="ip",
+             vae_scale:int=8):
+    #print("layer",layer_index)
+    module=attn_list[layer_index][1] #get the module no name
+    #module.processor.kv_ip
+    if kv_type=="ip":
+        processor_kv=module.processor.kv_ip
+    elif kv_type=="str":
+        processor_kv=module.processor.kv
+    size=processor_kv[step].size()
+    #print('\tprocessor_kv[step].size()',processor_kv[step].size())
+    
+    avg=processor_kv[step].mean(dim=1).squeeze(0)
+    #print("\t avg ", avg.size())
+    latent_dim_x=int (math.sqrt(avg.size()[0]))
+    latent_dim_y=int (math.sqrt(avg.size()[1]))
+    #print("\tlatent",latent_dim)
+    avg=avg.view([latent_dim_x,latent_dim_y,-1])
+    #print("\t avg ", avg.size())
+    avg=avg[:,:,token]
+    #print("\t avg ", avg.size())
+    avg_min,avg_max=avg.min(),avg.max()
+    x_norm = (avg - avg_min) / (avg_max - avg_min)  # [0,1]
+    x_norm[x_norm < threshold]=0.
+    avg = (x_norm * 255)
+    #avg=F.interpolate(avg.unsqueeze(0).unsqueeze(0), size=(dim, dim), mode="nearest").squeeze(0).squeeze(0)
+
+    return avg

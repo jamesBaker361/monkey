@@ -454,6 +454,7 @@ class CompatibleLatentConsistencyModelPipeline(LatentConsistencyModelPipeline):
         num_warmup_steps = len(timesteps) - num_inference_steps * self.scheduler.order
         self._num_timesteps = len(timesteps)
         latents_clone=latents.clone()
+        #print('TIMESTESPS timesteps timesteps TIMESTEPS',timesteps)
         with self.progress_bar(total=num_inference_steps) as progress_bar:
             for i, t in enumerate(timesteps):
                 #print(f"step {i}/num_inference_steps")
@@ -1022,6 +1023,7 @@ class CompatibleStableDiffusionPipeline(StableDiffusionPipeline):
         num_warmup_steps = len(timesteps) - num_inference_steps * self.scheduler.order
         latents_copy=latents.clone()
         self._num_timesteps = len(timesteps)
+        print('TIMESTESPS timesteps timesteps TIMESTEPS',timesteps)
         with self.progress_bar(total=num_inference_steps) as progress_bar:
             for i, t in enumerate(timesteps):
                 if self.interrupt:
