@@ -149,6 +149,7 @@ def main(args):
             draw=ImageDraw.Draw(gallery)
             draw.rectangle([(x,y),(x+h,y+w)],outline="red",width=10)
             concat=concat_images_horizontally([gallery,mask_pil])
+            concat.save(f"img_{n}.png")
         else:
             break
 
