@@ -184,7 +184,7 @@ def main(args):
             new_y=img_y//args.downscale_factor
             x=x//args.downscale_factor
             y=y//args.downscale_factor
-            h=h//args.donwscale_factor
+            h=h//args.downscale_factor
             w=w//args.downscale_factor
             gallery=gallery.resize((new_x,new_y))
             
