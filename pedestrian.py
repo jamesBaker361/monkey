@@ -18,6 +18,7 @@ from transformers import AutoProcessor, CLIPModel
 from pipelines import CompatibleLatentConsistencyModelPipeline,retrieve_timesteps
 from diffusers.models.attention_processor import  IPAdapterAttnProcessor2_0,Attention
 import torch.nn.functional as F
+from scipy.io import loadmat
 
 class PRWDataSet(Dataset):
     
@@ -81,9 +82,54 @@ class PRWDataSet(Dataset):
             "box":self.bbox[index],
             "gallery": Image.fromarray( cv.imread(self.gallery_image_path[index],cv.COLOR_BGR2RGB)[:, :, ::-1] ),
             "query":Image.fromarray( cv.imread(self.query_image_path[index],cv.COLOR_BGR2RGB)[:, :, ::-1] ),
-            "label":self.label_list[index]
+          #  "label":self.label_list[index]
         }
-                                    
+                        
+                        
+class CUHKDataset(Dataset):
+    def __init__(self):
+        super().__init__()
+        self.root=os.path.join("cuhk_sysu","cuhk_sysu")
+        self.image_path=os.path.join(self.root, "Image","SSM")
+        protoc = loadmat(os.path.join(self.root, "annotation","test","train_test","TestG50.mat"))
+        protoc = protoc["TestG50"].squeeze()
+        
+        gallery=protoc["Gallery"][0]
+        query=protoc["Query"][0]
+        
+        self.query_box_list=[]
+        self.gallery_box_list=[]
+        self.gallery_path_list=[]
+        self.query_path_list=[]
+        
+        for g_list,q in zip(gallery,query):
+            #g_list=g_list[0]
+            q=q[0]
+            query_path=q[0][0]
+            query_box=q[1][0]
+            query_box[2:]+=query_box[:2]
+            for g in g_list:
+                gallery_path=g[0][0]
+                gallery_box=g[1][0]
+                gallery_box[2:]+=gallery_box[:2]
+                
+                self.query_path_list.append(os.path.join(self.image_path,query_path))
+                self.gallery_box_list.append(gallery_box)
+                self.query_box_list.append(query_box)
+                self.gallery_path_list.append(os.path.join(self.image_path,gallery_path))
+                
+    def __len__(self):
+        return len(self.gallery_path_list)
+    
+    def __getitem__(self, index):
+        return {
+            "gallery":Image.fromarray( cv.imread(self.gallery_path_list[index],cv.COLOR_BGR2RGB)[:, :, ::-1] ),
+            "query":Image.fromarray( cv.imread(self.query_path_list[index],cv.COLOR_BGR2RGB)[:, :, ::-1] ).crop(self.query_box_list[index]),
+            #"query_box":self.query_box_list[index],
+            "box":self.gallery_box_list[index]
+        }
+            
+            
 
 def main(args):
     api,accelerator,device=repo_api_init(args)
@@ -117,8 +163,10 @@ def main(args):
     print(timesteps)
     
     mask_step_list=[max(m -args.offset,0 )for m in args.mask_step_list]
-    
-    dataset=PRWDataSet()
+    if args.dataset.lower()=="cuhk":
+        dataset=CUHKDataset()
+    else:
+        dataset=PRWDataSet()
     
     overlap=[]
     for n, batch in enumerate(dataset):
@@ -167,6 +215,7 @@ if  __name__=='__main__':
     parser.add_argument("--resize_dim",type=int,default=256)
     parser.add_argument("--threshold",type=float,default=0.5,help="threshold for mask")
     parser.add_argument("--ip_weight_name",type=str,default="base",help="base or face")
+    parser.add_argument("--dataset",type=str,default="prw",help="one of prw or cuhk")
     args=parse_args(parser)
     print(args)
     main(args)
