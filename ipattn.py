@@ -429,10 +429,9 @@ def get_mask(layer_index:int,
 
 def get_mask_rect(layer_index:int, 
              attn_list:list,step:int,
-             token:int,dim:int,
+             token:int,
              threshold:float,
-             kv_type:str="ip",
-             vae_scale:int=8):
+             kv_type:str="ip",):
     #print("layer",layer_index)
     module=attn_list[layer_index][1] #get the module no name
     #module.processor.kv_ip
