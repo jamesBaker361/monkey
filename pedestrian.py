@@ -17,6 +17,7 @@ from torchvision.transforms.functional import to_pil_image
 from transformers import AutoProcessor, CLIPModel
 from pipelines import CompatibleLatentConsistencyModelPipeline,retrieve_timesteps
 from diffusers.models.attention_processor import  IPAdapterAttnProcessor2_0,Attention
+import torch.nn.functional as F
 
 class PRWDataSet(Dataset):
     
@@ -141,8 +142,8 @@ def main(args):
             width=latents.size()[-1]
             prompt=" "
             pipe(prompt,height,width,args.initial_steps,
-                           ip_adapter_image=ip_adapter_image,generator=generator,timesteps=timesteps[offset:],latents=noisy_latents)
-            mask=sum([get_mask_rect(args.layer_index,attn_list,step,args.token,args.dim,args.threshold) for step in mask_list])
+                           ip_adapter_image=query,generator=generator,timesteps=timesteps[args.offset:],latents=noisy_latents)
+            mask=sum([get_mask_rect(args.layer_index,attn_list,step,args.token,args.dim,args.threshold) for step in args.mask_step_list])
             mask=F.interpolate(mask.unsqueeze(0).unsqueeze(0), size=(args.dim, args.dim), mode="nearest").squeeze(0).squeeze(0)
 
             mask_pil=to_pil_image(1-mask)
