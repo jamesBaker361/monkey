@@ -179,6 +179,15 @@ def main(args):
             [x,y,h,w]=batch["box"]
             gallery=batch["gallery"]
             query=batch["query"]
+            (img_x,img_y)=gallery.size
+            new_x=img_x//args.downscale_factor
+            new_y=img_y//args.downscale_factor
+            x=x//args.downscale_factor
+            y=y//args.downscale_factor
+            h=h//args.donwscale_factor
+            w=w//args.downscale_factor
+            gallery=gallery.resize((new_x,new_y))
+            
             if args.do_resize:
                 (img_x,img_y)=gallery.size
                 gallery=gallery.resize((args.resize_dim,args.resize_dim))
@@ -186,6 +195,7 @@ def main(args):
                 y=int(args.resize_dim*y/img_y)
                 h=int(args.resize_dim *h/img_x)
                 w=int(args.resize_dim *w/img_y)
+            
             gallery_pt=pipe.image_processor.preprocess(gallery)
             latent_dist=pipe.vae.encode(gallery_pt.to(pipe.vae.device,dtype=dtype)).latent_dist
             noise_level=torch.tensor( timesteps[args.offset]).long()
@@ -218,6 +228,7 @@ if  __name__=='__main__':
     parser.add_argument("--mask_step_list",type=int,nargs="*",default=[2,3,4,5])
     parser.add_argument("--do_resize",action="store_true")
     parser.add_argument("--resize_dim",type=int,default=256)
+    parser.add_argument("--downscale_factor",type=int,default=1)
     parser.add_argument("--threshold",type=float,default=0.5,help="threshold for mask")
     parser.add_argument("--ip_weight_name",type=str,default="base",help="base or face")
     parser.add_argument("--dataset",type=str,default="prw",help="one of prw or cuhk")
