@@ -133,9 +133,14 @@ class CUHKDataset(Dataset):
 
 def main(args):
     api,accelerator,device=repo_api_init(args)
+    dtype={
+        "fp16":torch.float16,
+        "no":torch.float32,
+        "bf16":torch.bfloat16
+    }[args.mixed_precision]
     pipe = CompatibleLatentConsistencyModelPipeline.from_pretrained(
             "SimianLuo/LCM_Dreamshaper_v7",
-            #torch_dtype=torch.float16,
+            dtype=dtype,
     ).to(accelerator.device)
     
     
@@ -145,7 +150,7 @@ def main(args):
         "face":"ip-adapter-full-face_sd15.bin",
         "base":"ip-adapter_sd15.bin"
     }[args.ip_weight_name]
-    pipe.load_ip_adapter("h94/IP-Adapter", subfolder="models", weight_name=weight_name)
+    pipe.load_ip_adapter("h94/IP-Adapter", subfolder="models", weight_name=weight_name,dtype=dtype)
     
 
     setattr(pipe,"safety_checker",None)
@@ -182,7 +187,7 @@ def main(args):
                 h=int(args.resize_dim *h/img_x)
                 w=int(args.resize_dim *w/img_y)
             gallery_pt=pipe.image_processor.preprocess(gallery)
-            latent_dist=pipe.vae.encode(gallery_pt.to(pipe.vae.device)).latent_dist
+            latent_dist=pipe.vae.encode(gallery_pt.to(pipe.vae.device,dtype=dtype)).latent_dist
             noise_level=torch.tensor( timesteps[args.offset]).long()
             latents=latent_dist.sample()
             noisy_latents=pipe.scheduler.add_noise(latents,torch.randn_like(latents),noise_level)
