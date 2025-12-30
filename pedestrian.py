@@ -144,6 +144,7 @@ def main(args):
     ).to(accelerator.device)
     
     
+    
 
     # Load IP-Adapter
     weight_name={
@@ -166,6 +167,10 @@ def main(args):
     timesteps,num_inference_steps=retrieve_timesteps(pipe.scheduler,args.initial_steps)
     print(pipe.scheduler)
     print(timesteps)
+    
+    for value in ["vae","unet","text_encoder","image_encoder"]:
+        if getattr(pipe,value)!=None:
+            getattr(pipe,value).to(dtype=dtype)
     
     mask_step_list=[max(m -args.offset,0 )for m in args.mask_step_list]
     if args.dataset.lower()=="cuhk":
