@@ -201,6 +201,7 @@ def main(args):
                 h=int(args.resize_dim *h/img_x)
                 w=int(args.resize_dim *w/img_y)
             
+            (img_x,img_y)=gallery.size
             gallery_pt=pipe.image_processor.preprocess(gallery)
             latent_dist=pipe.vae.encode(gallery_pt.to(pipe.vae.device,dtype=dtype)).latent_dist
             noise_level=torch.tensor( timesteps[args.offset]).long()
@@ -212,7 +213,7 @@ def main(args):
             pipe(prompt,height,width,args.initial_steps,
                            ip_adapter_image=query,generator=generator,timesteps=timesteps[args.offset:],latents=noisy_latents)
             mask=sum([get_mask_rect(args.layer_index,attn_list,step,args.token,args.threshold) for step in args.mask_step_list])
-            mask=F.interpolate(mask.unsqueeze(0).unsqueeze(0), size=(args.dim, args.dim), mode="nearest").squeeze(0).squeeze(0)
+            mask=F.interpolate(mask.unsqueeze(0).unsqueeze(0), size=(img_x,img_y), mode="nearest").squeeze(0).squeeze(0)
 
             mask_pil=to_pil_image(1-mask)
             draw=ImageDraw.Draw(gallery)
