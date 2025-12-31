@@ -431,6 +431,8 @@ def get_mask_rect(layer_index:int,
              attn_list:list,step:int,
              token:int,
              threshold:float,
+             latent_dim_x:int,
+             latent_dim_y:int,
              kv_type:str="ip",):
     #print("layer",layer_index)
     module=attn_list[layer_index][1] #get the module no name
@@ -444,8 +446,7 @@ def get_mask_rect(layer_index:int,
     
     avg=processor_kv[step].mean(dim=1).squeeze(0)
     print("\t avg ", avg.size())
-    latent_dim_x=int (math.sqrt(avg.size()[0]))
-    latent_dim_y=int (math.sqrt(avg.size()[1]))
+
     print("\tlatent",latent_dim_x,latent_dim_y)
     avg=avg.view([latent_dim_x,latent_dim_y,-1])
     print("\t avg ", avg.size())
