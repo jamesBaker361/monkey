@@ -204,6 +204,7 @@ def main(args):
             (img_x,img_y)=gallery.size
             gallery_pt=pipe.image_processor.preprocess(gallery)
             latent_dist=pipe.vae.encode(gallery_pt.to(pipe.vae.device,dtype=dtype)).latent_dist
+            latent_dim_x,latent_dim_y=latent_dist.size()[-2:]
             noise_level=torch.tensor( timesteps[args.offset]).long()
             latents=latent_dist.sample()
             noisy_latents=pipe.scheduler.add_noise(latents,torch.randn_like(latents),noise_level)
@@ -212,7 +213,7 @@ def main(args):
             prompt=" "
             pipe(prompt,height,width,args.initial_steps,
                            ip_adapter_image=query,generator=generator,timesteps=timesteps[args.offset:],latents=noisy_latents)
-            mask=sum([get_mask_rect(args.layer_index,attn_list,step,args.token,args.threshold) for step in mask_step_list])
+            mask=sum([get_mask_rect(args.layer_index,attn_list,step,args.token,args.threshold,latent_dim_x,latent_dim_y) for step in mask_step_list])
             mask=F.interpolate(mask.unsqueeze(0).unsqueeze(0), size=(img_x,img_y), mode="nearest").squeeze(0).squeeze(0)
 
             mask_pil=to_pil_image(mask)
