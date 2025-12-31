@@ -215,7 +215,7 @@ def main(args):
             mask=sum([get_mask_rect(args.layer_index,attn_list,step,args.token,args.threshold) for step in args.mask_step_list])
             mask=F.interpolate(mask.unsqueeze(0).unsqueeze(0), size=(img_x,img_y), mode="nearest").squeeze(0).squeeze(0)
 
-            mask_pil=to_pil_image(1-mask)
+            mask_pil=to_pil_image(255-mask)
             draw=ImageDraw.Draw(gallery)
             draw.rectangle([(x,y),(x+h,y+w)],outline="red",width=10)
             concat=concat_images_horizontally([gallery,mask_pil])
