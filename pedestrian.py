@@ -204,12 +204,13 @@ def main(args):
             (img_x,img_y)=gallery.size
             gallery_pt=pipe.image_processor.preprocess(gallery)
             latent_dist=pipe.vae.encode(gallery_pt.to(pipe.vae.device,dtype=dtype)).latent_dist
-            latent_dim_x,latent_dim_y=latent_dist.size()[-2:]
+            
             noise_level=torch.tensor( timesteps[args.offset]).long()
             latents=latent_dist.sample()
+            latent_dim_x,latent_dim_y=latents.size()[-2:]
             noisy_latents=pipe.scheduler.add_noise(latents,torch.randn_like(latents),noise_level)
-            height=latents.size()[-2]
-            width=latents.size()[-1]
+            height=latent_dim_y*8
+            width=latent_dim_x*8
             prompt=" "
             pipe(prompt,height,width,args.initial_steps,
                            ip_adapter_image=query,generator=generator,timesteps=timesteps[args.offset:],latents=noisy_latents)
