@@ -193,6 +193,15 @@ def main(args):
             w=w//args.downscale_factor
             gallery=gallery.resize((new_x,new_y))
             
+            if args.pad_to_eight:
+                while x%8!=0:
+                    x+=1
+                while y%8!=0:
+                    y+=1
+                black_img = Image.new("RGB", (x, y), (0, 0, 0))
+                black_img.paste(gallery)
+                gallery=black_img
+            
             if args.do_resize:
                 (img_x,img_y)=gallery.size
                 gallery=gallery.resize((args.resize_dim,args.resize_dim))
@@ -240,6 +249,7 @@ if  __name__=='__main__':
     parser.add_argument("--threshold",type=float,default=0.5,help="threshold for mask")
     parser.add_argument("--ip_weight_name",type=str,default="base",help="base or face")
     parser.add_argument("--dataset",type=str,default="prw",help="one of prw or cuhk")
+    parser.add_argument("--pad_to_eight",action="store_true")
     args=parse_args(parser)
     print(args)
     main(args)
