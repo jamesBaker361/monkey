@@ -299,7 +299,7 @@ class MonkeyIPAttnProcessor(torch.nn.Module):
                         attn_weight = torch.softmax(attn_weight, dim=-1)
 
                         self.kv_ip.append(attn_weight)
-                        print("added to kv ip" ,len(self.kv_ip),attn_weight.size())
+                        #print("added to kv ip" ,len(self.kv_ip),attn_weight.size())
                         _current_ip_hidden_states = _current_ip_hidden_states.to(query.dtype)
 
                         
@@ -451,7 +451,7 @@ def get_mask_rect(layer_index:int,
         latent_dim_x=(latent_dim_x+1)//2
     #print("\t avg ", avg.size())
 
-    #print("\tlatent",latent_dim_x,latent_dim_y)
+    print("\tlatent",latent_dim_x,latent_dim_y)
     avg=avg.view([latent_dim_x,latent_dim_y,-1])
     #print("\t avg ", avg.size())
     avg=avg[:,:,token]
