@@ -300,7 +300,7 @@ class MonkeyIPAttnProcessor(torch.nn.Module):
                         attn_weight = torch.softmax(attn_weight, dim=-1)
 
                         self.kv_ip.append(attn_weight)
-                        #print("added to kv ip" ,len(self.kv_ip))
+                        print("added to kv ip" ,len(self.kv_ip),height,width,attn_weight.size())
                         _current_ip_hidden_states = _current_ip_hidden_states.to(query.dtype)
 
                         
