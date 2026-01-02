@@ -287,7 +287,6 @@ class MonkeyIPAttnProcessor(torch.nn.Module):
                         ip_value = ip_value.view(batch_size, -1, attn.heads, head_dim).transpose(1, 2)
 
                         # the output of sdp = (batch, num_heads, seq_len, head_dim)
-                        # TODO: add support for attn.scale when we move to Torch 2.1
                         _current_ip_hidden_states = F.scaled_dot_product_attention(
                             query, ip_key, ip_value, attn_mask=None, dropout_p=0.0, is_causal=False
                         )
