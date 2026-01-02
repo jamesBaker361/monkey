@@ -142,7 +142,7 @@ class MonkeyIPAttnProcessor(torch.nn.Module):
 
         input_ndim = hidden_states.ndim
 
-        print("hidden states shape",hidden_states.size())
+        #print("hidden states shape",hidden_states.size())
 
         if input_ndim == 4:
             batch_size, channel, height, width = hidden_states.shape
@@ -441,16 +441,21 @@ def get_mask_rect(layer_index:int,
     elif kv_type=="str":
         processor_kv=module.processor.kv
     size=processor_kv[step].size()
-    print('\tprocessor_kv[step].size()',processor_kv[step].size())
+    #print('\tprocessor_kv[step].size()',processor_kv[step].size())
     
     avg=processor_kv[step].mean(dim=1).squeeze(0)
-    print("\t avg ", avg.size())
+    
+    sequence_length=avg.size()[0]
+    while latent_dim_x*latent_dim_y!=sequence_length:
+        latent_dim_y=(latent_dim_y+1)//2
+        latent_dim_x=(latent_dim_x+1)//2
+    #print("\t avg ", avg.size())
 
-    print("\tlatent",latent_dim_x,latent_dim_y)
+    #print("\tlatent",latent_dim_x,latent_dim_y)
     avg=avg.view([latent_dim_x,latent_dim_y,-1])
-    print("\t avg ", avg.size())
+    #print("\t avg ", avg.size())
     avg=avg[:,:,token]
-    print("\t avg ", avg.size())
+    #print("\t avg ", avg.size())
     avg_min,avg_max=avg.min(),avg.max()
     x_norm = (avg - avg_min) / (avg_max - avg_min)  # [0,1]
     x_norm[x_norm < threshold]=0.
