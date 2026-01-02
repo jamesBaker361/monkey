@@ -223,15 +223,16 @@ def main(args):
             height=latent_dim_y*8
             width=latent_dim_x*8
             prompt=" "
-            pipe(prompt,height,width,args.initial_steps,
+            gen=pipe(prompt,height,width,args.initial_steps,
                            ip_adapter_image=query,generator=generator,timesteps=timesteps[args.offset:],latents=noisy_latents)
-            mask=sum([get_mask_rect(args.layer_index,attn_list,step,args.token,args.threshold,latent_dim_x,latent_dim_y) for step in mask_step_list])
+            mask=sum([get_mask_rect(args.layer_index,attn_list,step,args.token,args.threshold,latent_dim_x,latent_dim_y) for step in mask_step_list]).images[0]
             mask=F.interpolate(mask.unsqueeze(0).unsqueeze(0), size=(img_x,img_y), mode="nearest").squeeze(0).squeeze(0)
 
             mask_pil=to_pil_image(mask)
             draw=ImageDraw.Draw(gallery)
-            draw.rectangle([(x,y),(x+h,y+w)],outline="red",width=10)
-            concat=concat_images_horizontally([gallery,mask_pil])
+            draw.rectangle([(x,y),(x+h,y+w)],fill="red")
+            print(gallery.size,mask_pil.size,gen.size)
+            concat=concat_images_vertically([gallery,mask_pil,gen])
             concat.save(f"img_{n}.png")
         else:
             break
