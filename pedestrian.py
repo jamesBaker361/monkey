@@ -185,6 +185,7 @@ def main(args):
             gallery=batch["gallery"]
             query=batch["query"]
             (img_x,img_y)=gallery.size
+            print("before x,y,h,w,img_x,img_y",x,y,h,w,img_x,img_y)
             new_x=img_x//args.downscale_factor
             new_y=img_y//args.downscale_factor
             x=x//args.downscale_factor
@@ -192,15 +193,15 @@ def main(args):
             h=h//args.downscale_factor
             w=w//args.downscale_factor
             gallery=gallery.resize((new_x,new_y))
-            
+            print("after x,y,h,w,img_x,img_y",x,y,h,w,img_x,img_y)
             if args.pad_to_eight:
-                while x%8!=0:
-                    x+=1
-                while y%8!=0:
-                    y+=1
-                x=int(x)
-                y=int(y)
-                black_img = Image.new("RGB", (x, y), (0, 0, 0))
+                while img_x%8!=0:
+                    img_x+=1
+                while img_y%8!=0:
+                    img_y+=1
+                img_x=int(img_x)
+                img_y=int(img_y)
+                black_img = Image.new("RGB", (img_x, img_y), (0, 0, 0))
                 black_img.paste(gallery)
                 gallery=black_img
             
