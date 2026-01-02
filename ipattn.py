@@ -142,7 +142,7 @@ class MonkeyIPAttnProcessor(torch.nn.Module):
 
         input_ndim = hidden_states.ndim
 
-        #print("hidden states shape",hidden_states.size())
+        print("hidden states shape",hidden_states.size())
 
         if input_ndim == 4:
             batch_size, channel, height, width = hidden_states.shape
