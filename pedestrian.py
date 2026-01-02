@@ -198,6 +198,8 @@ def main(args):
                     x+=1
                 while y%8!=0:
                     y+=1
+                x=int(x)
+                y=int(y)
                 black_img = Image.new("RGB", (x, y), (0, 0, 0))
                 black_img.paste(gallery)
                 gallery=black_img
