@@ -184,6 +184,8 @@ def main(args):
             [x,y,h,w]=batch["box"]
             gallery=batch["gallery"]
             query=batch["query"]
+            gallery.save(f"gallery_{args.img_save_prefix}_{n}.png")
+            query.save(f"query_{args.img_save_prefix}_{n}.png")
             (img_x,img_y)=gallery.size
             print("before x,y,h,w,img_x,img_y",x,y,h,w,img_x,img_y)
             new_x=img_x//args.downscale_factor
@@ -227,6 +229,7 @@ def main(args):
             gen=pipe(prompt,height,width,args.initial_steps,
                            ip_adapter_image=query,generator=generator,timesteps=timesteps[args.offset:],latents=noisy_latents).images[0]
             mask=sum([get_mask_rect(args.layer_index,attn_list,step,args.token,args.threshold,latent_dim_x,latent_dim_y) for step in mask_step_list])
+            print("mask size",mask.size())
             mask=F.interpolate(mask.unsqueeze(0).unsqueeze(0), size=(img_y,img_x), mode="nearest").squeeze(0).squeeze(0)
 
             mask_pil=to_pil_image(mask)
@@ -234,7 +237,7 @@ def main(args):
             draw.rectangle([(x,y),(x+h,y+w)],fill="red")
             print(gallery.size,mask_pil.size,gen.size)
             concat=concat_images_vertically([gallery,mask_pil,gen])
-            concat.save(f"img_{n}.png")
+            concat.save(f"{args.img_save_prefix}_{n}.png")
         else:
             break
 
@@ -254,6 +257,7 @@ if  __name__=='__main__':
     parser.add_argument("--ip_weight_name",type=str,default="base",help="base or face")
     parser.add_argument("--dataset",type=str,default="prw",help="one of prw or cuhk")
     parser.add_argument("--pad_to_eight",action="store_true")
+    parser.add_argument("--img_save_prefix",type=str,default="img")
     args=parse_args(parser)
     print(args)
     main(args)
