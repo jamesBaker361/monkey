@@ -20,7 +20,7 @@
 
 #SBATCH --error=slurm_chip/generic/%j.err   # STDERR output file (optional)
 
-#SBATCH --nodelist=g20-02,g20-03,g20-04,g20-05,g20-09,g20-12
+#SBATCH --nodelist=g20-[01-13]
 
 
 day=$(date +'%m/%d/%Y %R')
