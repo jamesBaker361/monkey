@@ -19,3 +19,37 @@ real_test_prompt_list=[
             ' on top of the sidewalk in a crowded street',
             ' on top of a dirt road',
             ' on top of a white rug',]
+
+# prompt_list.py additions
+
+LOCATION_PROMPTS = [
+    "on a beach at sunset",
+    "in a snowy forest",
+    "in a futuristic city",
+    "in a desert landscape",
+    "in a mountain valley",
+]
+
+STYLE_PROMPTS = [
+    "in oil painting style",
+    "in cyberpunk aesthetic",
+    "in watercolor style",
+    "in charcoal drawing style",
+    "in anime style",
+]
+
+ATTRIBUTE_PROMPTS = [
+    "wearing sunglasses and a hat",
+    "with a surprised expression",
+    "in a superhero costume",
+    "with face paint",
+    "with different hair color",
+]
+
+ACTION_PROMPTS = [
+    "jumping in the air",
+    "dancing with joy",
+    "running at full speed",
+    "swimming in water",
+    "climbing a mountain",
+]

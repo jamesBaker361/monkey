@@ -14,11 +14,11 @@ from ipattn import MonkeyIPAttnProcessor, get_modules_of_types,reset_monkey,inse
 import torch
 from image_utils import concat_images_horizontally
 from PIL import Image
-from torchvision.transforms.functional import to_pil_image
+from torchvision.transforms.functional import to_pil_image, to_tensor
 from transformers import AutoProcessor, CLIPModel
 from pipelines import CompatibleLatentConsistencyModelPipeline
 #import ImageReward as RM
-from eval_helpers import DinoMetric
+from eval_helpers import DinoMetric, SubjectPreservationMetric
 
 
 #from controlnet_aux import HEDdetector, MidasDetector, MLSDdetector, OpenposeDetector, PidiNetDetector, NormalBaeDetector, LineartDetector, LineartAnimeDetector, CannyDetector, ContentShuffleDetector, ZoeDetector, MediapipeFaceDetector, SamDetector, LeresDetector, DWposeDetector
@@ -27,7 +27,72 @@ import datasets
 from datasets import Dataset
 import wandb
 import numpy as np
+import pandas as pd
 from prompt_list import real_test_prompt_list
+import matplotlib.pyplot as plt
+
+
+
+
+def run_sensitivity_analysis(pipe, sample_image, sample_prompt, 
+                             steps_range=[2, 4, 6, 8],
+                             thresholds=[0.3, 0.5, 0.7, 0.9],
+                             output_dir="sensitivity_analysis"):
+    """
+    Measure how text alignment varies with key hyperparameters
+    """
+    import os
+    os.makedirs(output_dir, exist_ok=True)
+    
+    clip_model = CLIPModel.from_pretrained("openai/clip-vit-base-patch32")
+    processor = AutoProcessor.from_pretrained("openai/clip-vit-base-patch32")
+    
+    results = []
+    
+    for steps in steps_range:
+        for threshold in thresholds:
+            # Generate image
+            generator = torch.Generator()
+            generator.manual_seed(42)
+            
+            image = pipe(
+                sample_prompt, 
+                256, 256, 
+                steps,
+                ip_adapter_image=sample_image,
+                generator=generator
+            ).images[0]
+            
+            # Score with CLIP
+            inputs = processor(text=[sample_prompt], images=[image], 
+                             return_tensors="pt", padding=True)
+            outputs = clip_model(**inputs)
+            text_score = outputs.logits_per_text[0, 1].item()
+            
+            results.append({
+                'steps': steps,
+                'threshold': threshold,
+                'text_score': text_score,
+            })
+            
+            print(f"Steps={steps}, Threshold={threshold}: Score={text_score:.3f}")
+    
+    # Create heatmap
+    df = pd.DataFrame(results)
+    pivot = df.pivot(index='steps', columns='threshold', values='text_score')
+    
+    plt.figure(figsize=(10, 6))
+    sns.heatmap(pivot, annot=True, fmt='.3f', cmap='RdYlGn', vmin=0.2, vmax=0.8)
+    plt.title('Sensitivity Analysis: Inference Steps vs Threshold')
+    plt.ylabel('Inference Steps')
+    plt.xlabel('Threshold')
+    plt.tight_layout()
+    plt.savefig(f"{output_dir}/sensitivity_heatmap.png", dpi=150)
+    
+    print(f"Sensitivity analysis saved to {output_dir}/")
+    return df
+
+
 
 parser=argparse.ArgumentParser()
 
@@ -88,6 +153,9 @@ def get_mask(layer_index:int,
 
     return avg
 
+SUBJECT_PRESERVATION_VARIANTS=["unmasked","seg_mask","raw_mask","normal","all_steps"]
+SUBJECT_PRESERVATION_METRIC_NAMES=["subject_preservation","background_divergence","trade_off_ratio","total_lpips"]
+
 class ScoreTracker:
     def __init__(self):
         self.score_list_dict={
@@ -107,6 +175,9 @@ class ScoreTracker:
                 "image_score_normal":[],
                 "image_score_all_steps":[],
             }
+        for variant in SUBJECT_PRESERVATION_VARIANTS:
+            for metric_name in SUBJECT_PRESERVATION_METRIC_NAMES:
+                self.score_list_dict[f"{metric_name}_{variant}"]=[]
 
     def update(self,score_dict):
         for k,v in score_dict.items():
@@ -131,6 +202,7 @@ def main(args):
         accelerator.init_trackers(project_name=args.project_name,config=vars(args))
 
         dino_metric=DinoMetric(accelerator.device)
+        subject_preservation_metric=SubjectPreservationMetric(accelerator.device)
 
         if args.initial_mask_step_list is None:
             initial_quarter=args.initial_steps //4
@@ -396,7 +468,28 @@ def main(args):
             #[ir_score_normal,ir_score_unmasked, ir_score_seg_mask, ir_score_raw_mask,ir_score_all_steps]=ir_model.score(prompt,[final_image_normal,final_image_unmasked,final_image_seg_mask,final_image_raw_mask,final_image_all_steps])
             [dino_score_normal,dino_score_unmasked, dino_score_seg_mask, dino_score_raw_mask,dino_score_all_steps]=dino_metric.get_scores(ip_adapter_image, [final_image_normal,final_image_unmasked,final_image_seg_mask,final_image_raw_mask,final_image_all_steps])
 
-            
+            original_tensor=to_tensor(ip_adapter_image.convert("RGB").resize((args.dim,args.dim)))
+            variant_image_mask_dict={
+                "normal":(final_image_normal,mask),
+                "unmasked":(final_image_unmasked,mask),
+                "seg_mask":(final_image_seg_mask,map_mask),
+                "raw_mask":(final_image_raw_mask,mask),
+                "all_steps":(final_image_all_steps,mask),
+            }
+            subject_score_dict={}
+            for variant,(generated_image,subject_mask) in variant_image_mask_dict.items():
+                generated_tensor=to_tensor(generated_image.convert("RGB").resize((args.dim,args.dim)))
+                subject_mask_tensor=subject_mask.float().unsqueeze(0)
+                preservation_scores=subject_preservation_metric.compute_preservation_score(
+                    original_tensor,generated_tensor,subject_mask_tensor
+                )
+                for metric_name,value in preservation_scores.items():
+                    subject_score_dict[f"{metric_name}_{variant}"]=value
+            accelerator.print(subject_score_dict)
+            accelerator.log(subject_score_dict)
+            score_tracker.update(subject_score_dict)
+
+
 
             score_dict={
                 "dino_score_unmasked":dino_score_unmasked,
