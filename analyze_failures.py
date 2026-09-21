@@ -10,7 +10,13 @@ Usage:
     analyzer.print_report(failures)
 """
 
+import os
+import sys
+import time
+import math
+import argparse
 import torch
+import torch.nn.functional as F
 import numpy as np
 import matplotlib.pyplot as plt
 import seaborn as sns
@@ -21,9 +27,45 @@ import json
 from dataclasses import dataclass, asdict
 import logging
 
+from experiment_helpers.gpu_details import print_details
+from accelerate import Accelerator
+from diffusers.image_processor import IPAdapterMaskProcessor
+from diffusers.models.attention_processor import Attention
+sys.path.append(os.path.dirname(__file__))
+from ipattn import MonkeyIPAttnProcessor, get_modules_of_types, reset_monkey, insert_monkey, set_ip_adapter_scale_monkey
+from pipelines import CompatibleLatentConsistencyModelPipeline
+from custom_sam_detector import CustomSamDetector
+import datasets
+from transformers import AutoProcessor, CLIPModel
+from eval_helpers import DinoMetric
+from prompt_list import real_test_prompt_list
+
 # Setup logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
+
+
+def get_mask(layer_index:int, attn_list:list, step:int, token:int, dim:int,
+             threshold:float, kv_type:str="ip"):
+    """Derive an IP-Adapter attention mask, same mechanism as main_seg.py"""
+    module=attn_list[layer_index][1]
+    processor_kv=module.processor.kv_ip if kv_type=="ip" else module.processor.kv
+    avg=processor_kv[step].mean(dim=1).squeeze(0)
+    latent_dim=int(math.sqrt(avg.size()[0]))
+    avg=avg.view([latent_dim,latent_dim,-1])
+    avg=avg[:,:,token]
+    avg_min,avg_max=avg.min(),avg.max()
+    x_norm = (avg - avg_min) / (avg_max - avg_min)
+    x_norm[x_norm < threshold]=0.
+    return x_norm * 255
+
+
+def quarter_trim_step_list(step_count:int)->list:
+    step_list=[f for f in range(step_count)]
+    quarter=step_count//4
+    if quarter>0:
+        step_list=step_list[quarter:-quarter]
+    return step_list
 
 
 @dataclass
@@ -43,16 +85,25 @@ class FailureAnalyzer:
     """
     
     def __init__(self, pipe, accelerator, dino_metric, clip_model, processor,
-                 lpips_model=None, device="cuda"):
+                 lpips_model=None, device="cuda",
+                 attn_list=None, layer_index=15, token=1, dim=256,
+                 threshold=0.5, initial_steps=4, final_steps=8,
+                 initial_ip_adapter_scale=0.75, overlap_frac=0.8, kv_type="ip",
+                 custom_sam=None, mask_type="raw", default_object="character"):
         """
         Args:
-            pipe: Diffusion pipeline
+            pipe: Diffusion pipeline (must already have insert_monkey(pipe) applied)
             accelerator: Accelerate wrapper
             dino_metric: DINO feature metric for subject preservation
             clip_model: CLIP model for text alignment
             processor: CLIP processor
             lpips_model: LPIPS model (optional, for perceptual distance)
             device: Device to use
+            attn_list: modules_of_types(pipe.unet, Attention) list, needed for masked generation
+            layer_index, token, dim, threshold, initial_steps, final_steps,
+            initial_ip_adapter_scale, overlap_frac, kv_type: same masking
+                hyperparameters as main_seg.py
+            custom_sam: optional CustomSamDetector, needed only for mask_type="seg"
         """
         self.pipe = pipe
         self.accelerator = accelerator
@@ -61,7 +112,22 @@ class FailureAnalyzer:
         self.processor = processor
         self.lpips_model = lpips_model
         self.device = device
-        
+
+        self.attn_list = attn_list
+        self.layer_index = layer_index
+        self.token = token
+        self.dim = dim
+        self.threshold = threshold
+        self.initial_steps = initial_steps
+        self.final_steps = final_steps
+        self.initial_ip_adapter_scale = initial_ip_adapter_scale
+        self.overlap_frac = overlap_frac
+        self.kv_type = kv_type
+        self.custom_sam = custom_sam
+        self.mask_type = mask_type
+        self.default_object = default_object
+        self.mask_processor = IPAdapterMaskProcessor()
+
         # Thresholds for failure detection
         self.clip_score_threshold = 0.2  # Below this = poor text alignment
         self.dino_score_threshold = 0.3  # Below this = poor subject preservation
@@ -117,14 +183,17 @@ class FailureAnalyzer:
         """Analyze a single sample for failures"""
         
         ip_adapter_image = row["image"]
-        prompt = row.get("prompt", "character in a beautiful landscape")
-        
+        if "prompt" in row:
+            prompt = row["prompt"]
+        else:
+            object=row.get("object", self.default_object)
+            prompt=object+real_test_prompt_list[sample_id % len(real_test_prompt_list)]
+
         # Generate variants
         try:
-            # Raw mask version
             masked_img = self._generate_image(
-                ip_adapter_image, prompt, 
-                use_mask=True, mask_type="raw"
+                ip_adapter_image, prompt,
+                use_mask=True, mask_type=self.mask_type
             )
             
             # Unmasked version
@@ -366,35 +435,87 @@ class FailureAnalyzer:
     def _generate_image(self, ip_adapter_image: Image.Image, prompt: str,
                         use_mask: bool = False, mask_type: str = "raw") -> Image.Image:
         """
-        Generate image with or without masking
-        
-        Note: This is a simplified version. You'd need to integrate with your
-        actual generation pipeline (main_seg.py logic)
+        Generate image with or without masking, using the same monkey-patched,
+        attention-mask-guided IP-Adapter mechanism as main_seg.py.
         """
-        
+
+        reset_monkey(self.pipe)
+
+        if not use_mask:
+            generator = torch.Generator()
+            generator.manual_seed(42)
+            set_ip_adapter_scale_monkey(self.pipe, 1.0)
+            image = self.pipe(
+                prompt,
+                self.dim, self.dim,
+                self.final_steps,
+                ip_adapter_image=ip_adapter_image,
+                generator=generator,
+            ).images[0]
+            return image
+
+        if self.attn_list is None:
+            raise ValueError("attn_list must be provided to FailureAnalyzer for masked generation")
+
+        # initial low-scale pass to record the IP-Adapter attention maps used for masking
         generator = torch.Generator()
         generator.manual_seed(42)
-        
-        if not use_mask:
-            # Generate without masking
-            image = self.pipe(
-                prompt,
-                256, 256,
-                num_inference_steps=8,
-                ip_adapter_image=ip_adapter_image,
-                generator=generator,
-            ).images[0]
+        set_ip_adapter_scale_monkey(self.pipe, self.initial_ip_adapter_scale)
+        initial_image = self.pipe(
+            prompt,
+            self.dim, self.dim,
+            self.initial_steps,
+            ip_adapter_image=ip_adapter_image,
+            generator=generator,
+        ).images[0]
+
+        initial_mask_step_list = quarter_trim_step_list(self.initial_steps)
+        mask = sum([get_mask(self.layer_index, self.attn_list, step, self.token, self.dim, self.threshold, self.kv_type)
+                    for step in initial_mask_step_list])
+        mask = F.interpolate(mask.unsqueeze(0).unsqueeze(0), size=(self.dim, self.dim), mode="nearest").squeeze(0).squeeze(0)
+        mask[mask > 1] = 1.
+
+        if mask_type == "seg":
+            if self.custom_sam is None:
+                raise ValueError("custom_sam must be provided to FailureAnalyzer for mask_type='seg'")
+            _, map_list = self.custom_sam(initial_image, detect_resolution=self.dim)
+            mask_cpu = mask.cpu()
+            final_mask = torch.zeros((self.dim, self.dim))
+            for ann in map_list:
+                map_ = torch.from_numpy(ann["segmentation"]).cpu()
+                n_ones = map_.sum()
+                merged = map_ * mask_cpu
+                if merged.sum() >= self.overlap_frac * n_ones:
+                    final_mask = torch.max(map_, final_mask)
+            for _ in range(2):
+                if len(final_mask.size()) > 2:
+                    final_mask = final_mask.squeeze(0)
         else:
-            # Generate with masking
-            # This would require your mask generation logic from main_seg.py
-            image = self.pipe(
-                prompt,
-                256, 256,
-                num_inference_steps=8,
-                ip_adapter_image=ip_adapter_image,
-                generator=generator,
-            ).images[0]
-        
+            final_mask = mask
+
+        ip_mask = self.mask_processor.preprocess(final_mask)
+
+        final_mask_step_list = quarter_trim_step_list(self.final_steps)
+        scale_step_dict = {i: 0 for i in range(self.final_steps)}
+        for i in final_mask_step_list:
+            scale_step_dict[i] = 1.0
+
+        generator = torch.Generator()
+        generator.manual_seed(42)
+        set_ip_adapter_scale_monkey(self.pipe, 1.0)
+        image = self.pipe(
+            prompt,
+            self.dim, self.dim,
+            self.final_steps,
+            ip_adapter_image=ip_adapter_image,
+            generator=generator,
+            cross_attention_kwargs={
+                "ip_adapter_masks": ip_mask
+            },
+            mask_step_list=final_mask_step_list,
+            scale_step_dict=scale_step_dict,
+        ).images[0]
+
         return image
     
     def _create_comparison_image(self, img1: Image.Image, img2: Image.Image,
@@ -538,35 +659,84 @@ class FailureAnalyzer:
             logger.info(f"Severity heatmap saved to {output_path / 'failure_severity_heatmap.png'}")
 
 
-# Example usage
 if __name__ == "__main__":
-    """
-    Example of how to use FailureAnalyzer
-    
-    from analyze_failures import FailureAnalyzer
-    from eval_helpers import DinoMetric
-    from transformers import CLIPModel, AutoProcessor
-    
-    # Initialize
+    print_details()
+    start=time.time()
+
+    parser=argparse.ArgumentParser()
+    parser.add_argument("--mixed_precision",type=str,default="no")
+    parser.add_argument("--src_dataset",type=str, default="jlbaker361/ssl-league_captioned_splash-1000-sana")
+    parser.add_argument("--num_samples",type=int,default=100)
+    parser.add_argument("--object",type=str,default="character")
+    parser.add_argument("--mask_type",type=str,default="raw",help="raw or seg")
+    parser.add_argument("--initial_steps",type=int,default=4)
+    parser.add_argument("--final_steps",type=int,default=8)
+    parser.add_argument("--initial_ip_adapter_scale",type=float,default=0.75)
+    parser.add_argument("--layer_index",type=int,default=15)
+    parser.add_argument("--token",type=int,default=1)
+    parser.add_argument("--dim",type=int,default=256)
+    parser.add_argument("--threshold",type=float,default=0.5)
+    parser.add_argument("--overlap_frac",type=float,default=0.8)
+    parser.add_argument("--kv_type",type=str,default="ip")
+    parser.add_argument("--output_dir",type=str,default="failure_analysis")
+    args=parser.parse_args()
+    print(args)
+
+    accelerator=Accelerator(mixed_precision=args.mixed_precision)
+
     clip_model = CLIPModel.from_pretrained("openai/clip-vit-base-patch32")
     processor = AutoProcessor.from_pretrained("openai/clip-vit-base-patch32")
-    dino_metric = DinoMetric(device)
-    
+    dino_metric = DinoMetric(accelerator.device)
+
+    pipe = CompatibleLatentConsistencyModelPipeline.from_pretrained(
+        "SimianLuo/LCM_Dreamshaper_v7",
+        torch_dtype=torch.float16,
+    ).to(accelerator.device)
+    pipe.load_ip_adapter("h94/IP-Adapter", subfolder="models", weight_name="ip-adapter_sd15.bin")
+    setattr(pipe,"safety_checker",None)
+
+    insert_monkey(pipe)
+    attn_list=get_modules_of_types(pipe.unet,Attention)
+
+    custom_sam=None
+    if args.mask_type=="seg":
+        custom_sam=CustomSamDetector.from_pretrained("ybelkada/segment-anything", subfolder="checkpoints").to(accelerator.device)
+
+    try:
+        data=datasets.load_dataset(args.src_dataset)
+    except:
+        data=datasets.load_dataset(args.src_dataset,download_mode="force_redownload")
+    data=data["train"]
+
     analyzer = FailureAnalyzer(
         pipe=pipe,
         accelerator=accelerator,
         dino_metric=dino_metric,
         clip_model=clip_model,
         processor=processor,
+        device=accelerator.device,
+        attn_list=attn_list,
+        layer_index=args.layer_index,
+        token=args.token,
+        dim=args.dim,
+        threshold=args.threshold,
+        initial_steps=args.initial_steps,
+        final_steps=args.final_steps,
+        initial_ip_adapter_scale=args.initial_ip_adapter_scale,
+        overlap_frac=args.overlap_frac,
+        kv_type=args.kv_type,
+        custom_sam=custom_sam,
+        mask_type=args.mask_type,
+        default_object=args.object,
     )
-    
-    # Run analysis
-    failures = analyzer.run_analysis(data, num_samples=100, output_dir="failure_analysis")
-    
-    # Print report
+
+    with torch.no_grad():
+        failures = analyzer.run_analysis(data, num_samples=args.num_samples, output_dir=args.output_dir)
+
     analyzer.print_report(failures)
-    
-    # Create visualizations
-    analyzer.create_failure_visualization(output_dir="failure_analysis")
-    """
-    pass
+    analyzer.create_failure_visualization(output_dir=args.output_dir)
+
+    end=time.time()
+    seconds=end-start
+    print(f"Failure analysis saved to {args.output_dir}/ ; time elapsed: {seconds} seconds")
+    print("all done!")

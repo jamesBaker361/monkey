@@ -16,6 +16,11 @@ Usage:
     visualizer.create_comparison_grid(initial_image, mask, final_image, prompt)
 """
 
+import os
+import sys
+import time
+import math
+import argparse
 import torch
 import torch.nn.functional as F
 import numpy as np
@@ -28,9 +33,43 @@ from pathlib import Path
 from typing import Dict, List, Tuple, Optional
 import logging
 
+from experiment_helpers.gpu_details import print_details
+from accelerate import Accelerator
+from diffusers.image_processor import IPAdapterMaskProcessor
+from diffusers.models.attention_processor import Attention
+sys.path.append(os.path.dirname(__file__))
+from ipattn import MonkeyIPAttnProcessor, get_modules_of_types, reset_monkey, insert_monkey, set_ip_adapter_scale_monkey
+from pipelines import CompatibleLatentConsistencyModelPipeline
+from custom_sam_detector import CustomSamDetector
+import datasets
+from prompt_list import real_test_prompt_list
+
 # Setup logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
+
+
+def get_mask(layer_index:int, attn_list:list, step:int, token:int, dim:int,
+             threshold:float, kv_type:str="ip"):
+    """Derive an IP-Adapter attention mask, same mechanism as main_seg.py"""
+    module=attn_list[layer_index][1]
+    processor_kv=module.processor.kv_ip if kv_type=="ip" else module.processor.kv
+    avg=processor_kv[step].mean(dim=1).squeeze(0)
+    latent_dim=int(math.sqrt(avg.size()[0]))
+    avg=avg.view([latent_dim,latent_dim,-1])
+    avg=avg[:,:,token]
+    avg_min,avg_max=avg.min(),avg.max()
+    x_norm = (avg - avg_min) / (avg_max - avg_min)
+    x_norm[x_norm < threshold]=0.
+    return x_norm * 255
+
+
+def quarter_trim_step_list(step_count:int)->list:
+    step_list=[f for f in range(step_count)]
+    quarter=step_count//4
+    if quarter>0:
+        step_list=step_list[quarter:-quarter]
+    return step_list
 
 
 class AttentionVisualizer:
@@ -493,9 +532,141 @@ def visualize_inference_process(pipe, attn_processors: Dict,
 
 
 if __name__ == "__main__":
-    print("Attention visualization module")
-    print("Use: from attention_visualize import AttentionVisualizer")
-    print("")
-    print("Example:")
-    print("  visualizer = AttentionVisualizer('attention_viz/')")
-    print("  visualizer.visualize_attention_maps(processor, step_idx=2, layer_idx=15)")
+    print_details()
+    start=time.time()
+
+    parser=argparse.ArgumentParser()
+    parser.add_argument("--mixed_precision",type=str,default="no")
+    parser.add_argument("--src_dataset",type=str, default="jlbaker361/ssl-league_captioned_splash-1000-sana")
+    parser.add_argument("--sample_index",type=int,default=0,help="which row of src_dataset to use as the sample image")
+    parser.add_argument("--object",type=str,default="character")
+    parser.add_argument("--sample_prompt",type=str,default=None,help="overrides the prompt built from --object and the dataset row")
+    parser.add_argument("--initial_steps",type=int,default=4)
+    parser.add_argument("--final_steps",type=int,default=8)
+    parser.add_argument("--initial_ip_adapter_scale",type=float,default=0.75)
+    parser.add_argument("--layer_index",type=int,default=15)
+    parser.add_argument("--token",type=int,default=1)
+    parser.add_argument("--dim",type=int,default=256)
+    parser.add_argument("--threshold",type=float,default=0.5)
+    parser.add_argument("--overlap_frac",type=float,default=0.8)
+    parser.add_argument("--kv_type",type=str,default="ip")
+    parser.add_argument("--output_dir",type=str,default="attention_visualization")
+    args=parser.parse_args()
+    print(args)
+
+    accelerator=Accelerator(mixed_precision=args.mixed_precision)
+
+    pipe = CompatibleLatentConsistencyModelPipeline.from_pretrained(
+        "SimianLuo/LCM_Dreamshaper_v7",
+        torch_dtype=torch.float16,
+    ).to(accelerator.device)
+    pipe.load_ip_adapter("h94/IP-Adapter", subfolder="models", weight_name="ip-adapter_sd15.bin")
+    setattr(pipe,"safety_checker",None)
+
+    insert_monkey(pipe)
+    attn_list=get_modules_of_types(pipe.unet,Attention)
+    mask_processor=IPAdapterMaskProcessor()
+    custom_sam=CustomSamDetector.from_pretrained("ybelkada/segment-anything", subfolder="checkpoints").to(accelerator.device)
+
+    try:
+        data=datasets.load_dataset(args.src_dataset)
+    except:
+        data=datasets.load_dataset(args.src_dataset,download_mode="force_redownload")
+    data=data["train"]
+
+    row=data[args.sample_index]
+    ip_adapter_image=row["image"]
+    object=args.object
+    if "object" in row:
+        object=row["object"]
+    prompt=args.sample_prompt or object+real_test_prompt_list[args.sample_index % len(real_test_prompt_list)]
+    print("prompt",prompt)
+
+    with torch.no_grad():
+        reset_monkey(pipe)
+
+        # initial low-scale pass to record the IP-Adapter attention maps used for masking
+        generator=torch.Generator()
+        generator.manual_seed(123)
+        set_ip_adapter_scale_monkey(pipe,args.initial_ip_adapter_scale)
+        initial_image=pipe(prompt,args.dim,args.dim,args.initial_steps,ip_adapter_image=ip_adapter_image,generator=generator).images[0]
+
+        initial_mask_step_list=quarter_trim_step_list(args.initial_steps)
+        mask=sum([get_mask(args.layer_index,attn_list,step,args.token,args.dim,args.threshold,args.kv_type) for step in initial_mask_step_list])
+        mask=F.interpolate(mask.unsqueeze(0).unsqueeze(0), size=(args.dim, args.dim), mode="nearest").squeeze(0).squeeze(0)
+        mask[mask>1]=1.
+        ip_mask=mask_processor.preprocess(mask)
+
+        final_mask_step_list=quarter_trim_step_list(args.final_steps)
+        scale_step_dict={i:0 for i in range(args.final_steps)}
+        for i in final_mask_step_list:
+            scale_step_dict[i]=1.0
+
+        # raw attention-mask guided pass
+        generator=torch.Generator()
+        generator.manual_seed(123)
+        set_ip_adapter_scale_monkey(pipe,1.0)
+        raw_mask_image=pipe(prompt,args.dim,args.dim,args.final_steps,ip_adapter_image=ip_adapter_image,generator=generator,cross_attention_kwargs={
+            "ip_adapter_masks":ip_mask
+        }, mask_step_list=final_mask_step_list,scale_step_dict=scale_step_dict).images[0]
+
+        # unmasked baseline pass
+        generator=torch.Generator()
+        generator.manual_seed(123)
+        set_ip_adapter_scale_monkey(pipe,1.0)
+        unmasked_image=pipe(prompt,args.dim,args.dim,args.final_steps,ip_adapter_image=ip_adapter_image,generator=generator,
+                             scale_step_dict=scale_step_dict).images[0]
+
+        # SAM-refined mask pass
+        segmented_image,map_list=custom_sam(initial_image,detect_resolution=args.dim)
+        mask_cpu=mask.cpu()
+        map_mask=torch.zeros((args.dim,args.dim))
+        for ann in map_list:
+            map_=torch.from_numpy(ann["segmentation"]).cpu()
+            n_ones=map_.sum()
+            merged=map_*mask_cpu
+            if merged.sum()>=args.overlap_frac*n_ones:
+                map_mask=torch.max(map_,map_mask)
+        for _ in range(2):
+            if len(map_mask.size())>2:
+                map_mask=map_mask.squeeze(0)
+        ip_map_mask=mask_processor.preprocess(map_mask)
+
+        generator=torch.Generator()
+        generator.manual_seed(123)
+        set_ip_adapter_scale_monkey(pipe,1.0)
+        seg_mask_image=pipe(prompt,args.dim,args.dim,args.final_steps,ip_adapter_image=ip_adapter_image,generator=generator,cross_attention_kwargs={
+            "ip_adapter_masks":ip_map_mask
+        }, mask_step_list=final_mask_step_list,scale_step_dict=scale_step_dict).images[0]
+
+    visualizer=AttentionVisualizer(output_dir=args.output_dir)
+
+    monkey_processor=attn_list[args.layer_index][1].processor
+    step_to_show=initial_mask_step_list[len(initial_mask_step_list)//2] if initial_mask_step_list else 0
+    attention_map=visualizer.visualize_attention_maps(monkey_processor, step_idx=step_to_show, layer_idx=args.layer_index)
+
+    resized_source=ip_adapter_image.convert("RGB").resize((args.dim,args.dim))
+
+    if attention_map is not None:
+        visualizer.create_attention_heatmap_overlay(resized_source, attention_map, mask=mask_cpu, save_name="attention_overlay")
+
+    visualizer.create_mechanism_explanation(
+        image=resized_source,
+        mask=mask_cpu,
+        initial_generation=initial_image,
+        raw_mask_generation=raw_mask_image,
+        seg_mask_generation=seg_mask_image,
+        unmasked_generation=unmasked_image,
+        prompt=prompt,
+    )
+
+    visualizer.create_comparison_triplet(
+        resized_source, unmasked_image, raw_mask_image, seg_mask_image,
+        labels=["Unmasked","Raw Mask","Seg Mask"],
+        save_name="comparison_triplet"
+    )
+
+    end=time.time()
+    seconds=end-start
+    print(f"Visualizations saved to {args.output_dir}/ ; time elapsed: {seconds} seconds")
+    print("all done!")

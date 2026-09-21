@@ -30,68 +30,7 @@ import numpy as np
 import pandas as pd
 from prompt_list import real_test_prompt_list
 import matplotlib.pyplot as plt
-
-
-
-
-def run_sensitivity_analysis(pipe, sample_image, sample_prompt, 
-                             steps_range=[2, 4, 6, 8],
-                             thresholds=[0.3, 0.5, 0.7, 0.9],
-                             output_dir="sensitivity_analysis"):
-    """
-    Measure how text alignment varies with key hyperparameters
-    """
-    import os
-    os.makedirs(output_dir, exist_ok=True)
-    
-    clip_model = CLIPModel.from_pretrained("openai/clip-vit-base-patch32")
-    processor = AutoProcessor.from_pretrained("openai/clip-vit-base-patch32")
-    
-    results = []
-    
-    for steps in steps_range:
-        for threshold in thresholds:
-            # Generate image
-            generator = torch.Generator()
-            generator.manual_seed(42)
-            
-            image = pipe(
-                sample_prompt, 
-                256, 256, 
-                steps,
-                ip_adapter_image=sample_image,
-                generator=generator
-            ).images[0]
-            
-            # Score with CLIP
-            inputs = processor(text=[sample_prompt], images=[image], 
-                             return_tensors="pt", padding=True)
-            outputs = clip_model(**inputs)
-            text_score = outputs.logits_per_text[0, 1].item()
-            
-            results.append({
-                'steps': steps,
-                'threshold': threshold,
-                'text_score': text_score,
-            })
-            
-            print(f"Steps={steps}, Threshold={threshold}: Score={text_score:.3f}")
-    
-    # Create heatmap
-    df = pd.DataFrame(results)
-    pivot = df.pivot(index='steps', columns='threshold', values='text_score')
-    
-    plt.figure(figsize=(10, 6))
-    sns.heatmap(pivot, annot=True, fmt='.3f', cmap='RdYlGn', vmin=0.2, vmax=0.8)
-    plt.title('Sensitivity Analysis: Inference Steps vs Threshold')
-    plt.ylabel('Inference Steps')
-    plt.xlabel('Threshold')
-    plt.tight_layout()
-    plt.savefig(f"{output_dir}/sensitivity_heatmap.png", dpi=150)
-    
-    print(f"Sensitivity analysis saved to {output_dir}/")
-    return df
-
+import seaborn as sns
 
 
 parser=argparse.ArgumentParser()
