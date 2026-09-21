@@ -26,7 +26,7 @@
 day=$(date +'%m/%d/%Y %R')
 echo "gpu"  ${day} $SLURM_JOBID "node_list" $SLURM_NODELIST $@  "\n" >> jobs.txt
 module purge
-module load slurm/chip-gpu/23.11.4
+module load slurm/chip-gpu/23.11.11
 #module load cudnn/7.0.3
 module load   Autoconf/2.72-GCCcore-13.3.0 
 module load  CMake/3.29.3-GCCcore-13.3.0
