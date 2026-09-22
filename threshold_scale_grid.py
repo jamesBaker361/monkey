@@ -27,6 +27,7 @@ parser.add_argument("--seed", type=int, default=123)
 parser.add_argument("--thresholds", nargs=4, type=float, default=[0.3, 0.5, 0.7, 0.9])
 parser.add_argument("--initial_ip_adapter_scales", nargs=4, type=float, default=[0.25, 0.5, 0.75, 1.0])
 parser.add_argument("--output_path", type=str, default="threshold_scale_grid.png")
+parser.add_argument("--data_index",type=int,default=0)
 
 
 def center_crop_to_square(image: Image.Image) -> Image.Image:
@@ -41,7 +42,7 @@ def main(args):
     device = "cuda" if torch.cuda.is_available() else "cpu"
 
     data = datasets.load_dataset(args.src_dataset, split="train")
-    row = data[0]
+    row = data[args.data_index]
     ip_adapter_image = center_crop_to_square(row["image"].convert("RGB")).resize((args.dim, args.dim))
     prompt = row["champion"] + args.prompt_suffix
 
