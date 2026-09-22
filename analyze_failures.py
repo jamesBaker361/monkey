@@ -178,7 +178,7 @@ class FailureAnalyzer:
         if "prompt" in row:
             prompt = row["prompt"]
         else:
-            object=row.get("object", self.default_object)
+            object=row.get("object",row.get("text", self.default_object))
             prompt=object+real_test_prompt_list[sample_id % len(real_test_prompt_list)]
 
         # Generate variants
@@ -611,7 +611,7 @@ if __name__ == "__main__":
 
     parser=argparse.ArgumentParser()
     parser.add_argument("--mixed_precision",type=str,default="no")
-    parser.add_argument("--src_dataset",type=str, default="jlbaker361/ssl-league_captioned_splash-1000-sana")
+    parser.add_argument("--src_dataset",type=str, default="jlbaker361/dreambooth")
     parser.add_argument("--num_samples",type=int,default=100)
     parser.add_argument("--object",type=str,default="character")
     parser.add_argument("--initial_steps",type=int,default=4)

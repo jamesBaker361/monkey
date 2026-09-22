@@ -39,7 +39,7 @@ parser.add_argument("--project_name",type=str,default="seg-ip")
 parser.add_argument("--load_hf",action="store_true",help="whether to load a special pretrained model")
 parser.add_argument("--embedding",type=str, help="ignore unless load from hf; its the embedding type for embedding helpers")
 parser.add_argument("--pretrained_model_path",type=str,default="")
-parser.add_argument("--src_dataset",type=str, default="jlbaker361/ssl-league_captioned_splash-1000-sana")
+parser.add_argument("--src_dataset",type=str, default="jlbaker361/dreambooth")
 parser.add_argument("--use_test_split",action="store_true", help="only true for league dataset")
 parser.add_argument("--initial_steps",type=int,default=4,help="how many steps for the initial inference")
 parser.add_argument("--initial_mask_step_list",nargs="*",help="steps to generate mask from",type=int)
@@ -47,7 +47,7 @@ parser.add_argument("--final_steps",type=int,default=8, help="how many steps for
 parser.add_argument("--final_mask_steps_list",nargs="*",help="steps to apply mask from",type=int)
 parser.add_argument("--final_adapter_steps_list",nargs="*",help="steps to apply adapter for (regardless of mask)",type=int)
 parser.add_argument("--threshold",type=float,default=0.5,help="threshold for mask")
-parser.add_argument("--limit",type=int,default=-1,help="limit of samples")
+parser.add_argument("--limit",type=int,default=100,help="limit of samples")
 parser.add_argument("--layer_index",type=int,default=15)
 parser.add_argument("--dim",type=int,default=256)
 parser.add_argument("--token",type=int,default=1, help="which IP token is attention")
@@ -194,9 +194,7 @@ def main(args):
                 break
             reset_monkey(pipe)
             ip_adapter_image=row["image"]
-            object=args.object
-            if "object" in row:
-                object=row["object"]
+            object=row.get("object",row.get("text",args.object))
             prompt=object+real_test_prompt_list[k % len(real_test_prompt_list)]
             if args.background:
                 background_image=background_dict[prompt.replace(object,"")]

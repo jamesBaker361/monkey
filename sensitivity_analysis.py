@@ -174,7 +174,7 @@ if __name__=='__main__':
 
     parser=argparse.ArgumentParser()
     parser.add_argument("--mixed_precision",type=str,default="no")
-    parser.add_argument("--src_dataset",type=str, default="jlbaker361/ssl-league_captioned_splash-1000-sana")
+    parser.add_argument("--src_dataset",type=str, default="jlbaker361/dreambooth")
     parser.add_argument("--sample_index",type=int,default=0,help="which row of src_dataset to use as the sample image")
     parser.add_argument("--object",type=str,default="character")
     parser.add_argument("--sample_prompt",type=str,default=None,help="overrides the prompt built from --object and the dataset row")
@@ -207,9 +207,7 @@ if __name__=='__main__':
 
     row=data[args.sample_index]
     sample_image=row["image"]
-    object=args.object
-    if "object" in row:
-        object=row["object"]
+    object=row.get("object",row.get("text",args.object))
     sample_prompt=args.sample_prompt or object+real_test_prompt_list[args.sample_index % len(real_test_prompt_list)]
     print("sample_prompt",sample_prompt)
 
