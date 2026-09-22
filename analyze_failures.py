@@ -243,15 +243,15 @@ class FailureAnalyzer:
             
             # Use DINO score
             dino_scores = self.dino_metric.get_scores(original, [masked])
-            dino_score = dino_scores[0] if dino_scores else 0.0
-            
+            dino_score = float(dino_scores[0]) if len(dino_scores) > 0 else 0.0
+
             if dino_score < self.dino_score_threshold:
                 # Save example
                 comparison = self._create_comparison_image(
                     original, masked, title="Subject Degradation"
                 )
                 comparison.save(output_dir / f"subject_degradation_{sample_id}.png")
-                
+
                 failure = FailureExample(
                     sample_id=sample_id,
                     failure_type="subject_degradation",
@@ -322,7 +322,7 @@ class FailureAnalyzer:
         try:
             # If DINO score is very low overall, suggests artifacts
             dino_scores = self.dino_metric.get_scores(original, [masked])
-            dino_score = dino_scores[0] if dino_scores else 0.0
+            dino_score = float(dino_scores[0]) if len(dino_scores) > 0 else 0.0
             
             # Check if it's a background issue (not subject degradation)
             # We'd need to look at non-subject regions
@@ -384,7 +384,7 @@ class FailureAnalyzer:
                 failure = FailureExample(
                     sample_id=sample_id,
                     failure_type="low_quality_generation",
-                    severity=np.mean(severity_scores) if severity_scores else 0.5,
+                    severity=float(np.mean(severity_scores)) if severity_scores else 0.5,
                     reason="; ".join(issues),
                     image_path=str(output_dir / f"low_quality_{sample_id}.png"),
                     metric_value=text_score,
@@ -500,7 +500,7 @@ class FailureAnalyzer:
         
         # Save as JSON
         with open(output_dir / "failure_summary.json", "w") as f:
-            json.dump(summary, f, indent=2)
+            json.dump(summary, f, indent=2, default=lambda o: o.item() if hasattr(o, "item") else str(o))
         
         logger.info(f"Failure summary saved to {output_dir / 'failure_summary.json'}")
     
