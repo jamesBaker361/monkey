@@ -22,7 +22,6 @@ from eval_helpers import DinoMetric, SubjectPreservationMetric
 
 
 #from controlnet_aux import HEDdetector, MidasDetector, MLSDdetector, OpenposeDetector, PidiNetDetector, NormalBaeDetector, LineartDetector, LineartAnimeDetector, CannyDetector, ContentShuffleDetector, ZoeDetector, MediapipeFaceDetector, SamDetector, LeresDetector, DWposeDetector
-from custom_sam_detector import CustomSamDetector
 import datasets
 from datasets import Dataset
 import wandb
@@ -52,8 +51,6 @@ parser.add_argument("--limit",type=int,default=-1,help="limit of samples")
 parser.add_argument("--layer_index",type=int,default=15)
 parser.add_argument("--dim",type=int,default=256)
 parser.add_argument("--token",type=int,default=1, help="which IP token is attention")
-parser.add_argument("--overlap_frac",type=float,default=0.8)
-parser.add_argument("--segmentation_attention_method",type=str,help="overlap or exclusive",default="overlap")
 parser.add_argument("--kv_type",type=str,default="ip")
 parser.add_argument("--initial_ip_adapter_scale",type=float,default=0.75)
 parser.add_argument("--background",action="store_true")
@@ -92,24 +89,21 @@ def get_mask(layer_index:int,
 
     return avg
 
-SUBJECT_PRESERVATION_VARIANTS=["unmasked","seg_mask","raw_mask","normal","all_steps"]
+SUBJECT_PRESERVATION_VARIANTS=["unmasked","raw_mask","normal","all_steps"]
 SUBJECT_PRESERVATION_METRIC_NAMES=["subject_preservation","background_divergence","trade_off_ratio","total_lpips"]
 
 class ScoreTracker:
     def __init__(self):
         self.score_list_dict={
                 "dino_score_unmasked":[],
-                "dino_score_seg_mask":[],
                 "dino_score_raw_mask":[],
                 "dino_score_normal":[],
                 "dino_score_all_steps":[],
                 "text_score_unmasked":[],
-                "text_score_seg_mask":[],
                 "text_score_raw_mask":[],
                 "text_score_normal":[],
                 "text_score_all_steps":[],
                 "image_score_unmasked":[],
-                "image_score_seg_mask":[],
                 "image_score_raw_mask":[],
                 "image_score_normal":[],
                 "image_score_all_steps":[],
@@ -153,8 +147,6 @@ def main(args):
             accelerator.print("defaulting final maske step lst",args.final_mask_steps_list )
         if args.final_adapter_steps_list is None:
             args.final_adapter_steps_list=args.final_mask_steps_list
-
-        custom_sam= CustomSamDetector.from_pretrained("ybelkada/segment-anything", subfolder="checkpoints").to(accelerator.device)
 
         pipe = CompatibleLatentConsistencyModelPipeline.from_pretrained(
             "SimianLuo/LCM_Dreamshaper_v7",
@@ -315,65 +307,11 @@ def main(args):
                 "ip_adapter_masks":ip_mask
             }, mask_step_list=[x for x in range(args.final_steps)],scale_step_dict={i:1.0  for i in range(args.final_steps) }).images[0]
             accelerator.print("all steps ",[x for x in range(args.final_steps)],{i:1.0  for i in range(args.final_steps) })
-            segmented_image,map_list=custom_sam(initial_image,detect_resolution=args.dim)
-            accelerator.log({
-                "segmented":wandb.Image(segmented_image)
-            })
             mask=mask.cpu()
 
-            if args.segmentation_attention_method=="exclusive":
-                map_mask=torch.ones((args.dim,args.dim))
-            elif args.segmentation_attention_method=="overlap":
-                map_mask=torch.zeros((args.dim,args.dim))
-            for ann in map_list:
-                map_=ann["segmentation"]
-
-                map_=torch.from_numpy(map_).cpu()
-                #map_=F.interpolate(map_.unsqueeze(0).unsqueeze(0), (args.dim,args.dim)).squeeze(0).squeeze(0)
-                
-                if args.segmentation_attention_method=="exclusive":
-                    merged=map_*mask
-
-                    map_mask=merged*map_mask
-
-                elif args.segmentation_attention_method=="overlap":
-                    
-                    n_ones=map_.sum()
-                    merged=map_*mask
-                    if merged.sum()>= args.overlap_frac * n_ones:
-                        map_mask=torch.max(map_,map_mask)
-                
-            if len(map_list)==0:
-                accelerator.log({
-                    "unsegmentable":wandb.Image(initial_image)
-                })
-            for _ in range(2):
-                if len(map_mask.size())>2:
-                    map_mask=map_mask.squeeze(0)
-
-            
-            inverted_map_mask=1.0-map_mask
-            map_mask_pil=to_pil_image(1-map_mask).convert("RGB")
-            #map_mask=mask_processor.preprocess(map_mask)
-
-            generator=torch.Generator()
-            generator.manual_seed(123)
-            ip_map_mask=mask_processor.preprocess(map_mask)
-            if args.background:
-                ip_map_mask=mask_processor.preprocess([map_mask, inverted_map_mask])
-                accelerator.print('ip_map_mask.size()',ip_map_mask.size())
-                ip_map_mask = [ip_map_mask.reshape(1, ip_map_mask.shape[0], ip_map_mask.shape[2], ip_map_mask.shape[3])]
-                
-            accelerator.print("final_image_seg_mask")
-            final_image_seg_mask=pipe(prompt,args.dim,args.dim,args.final_steps,ip_adapter_image=ip_adapter_image_list,generator=generator,cross_attention_kwargs={
-                "ip_adapter_masks":ip_map_mask
-            }, mask_step_list=mask_step_list,scale_step_dict=scale_step_dict).images[0]
-
-            
-            concat_image_list=[ip_adapter_image.resize([args.dim,args.dim],0),mask_pil,map_mask_pil,masked_img, segmented_image,
+            concat_image_list=[ip_adapter_image.resize([args.dim,args.dim],0),mask_pil,masked_img,
                                                initial_image,
                                                final_image_raw_mask,
-                                               final_image_seg_mask,
                                                final_image_unmasked,
                                                final_image_normal,
                                                final_image_all_steps]
@@ -390,11 +328,11 @@ def main(args):
 
 
             inputs = processor(
-                text=[prompt], images=[ip_adapter_image,final_image_normal,final_image_unmasked,final_image_seg_mask,final_image_raw_mask,final_image_all_steps], return_tensors="pt", padding=True
+                text=[prompt], images=[ip_adapter_image,final_image_normal,final_image_unmasked,final_image_raw_mask,final_image_all_steps], return_tensors="pt", padding=True
             )
 
             outputs = clip_model(**inputs)
-            
+
             #logits_per_text = outputs.logits_per_text.numpy()[0]  # this is the image-text similarity score
             image_embeds=outputs.image_embeds
             text_embeds=outputs.text_embeds
@@ -402,16 +340,15 @@ def main(args):
             #accelerator.print("logits",logits_per_text.size())
 
             image_similarities=torch.matmul(image_embeds,image_embeds.t()).numpy()[0]
-            [_,text_score_normal,text_score_unmasked, text_score_seg_mask, text_score_raw_mask,text_score_all_steps]=logits_per_text
-            [_,image_score_normal,image_score_unmasked, image_score_seg_mask, image_score_raw_mask,image_score_all_steps]=image_similarities
-            #[ir_score_normal,ir_score_unmasked, ir_score_seg_mask, ir_score_raw_mask,ir_score_all_steps]=ir_model.score(prompt,[final_image_normal,final_image_unmasked,final_image_seg_mask,final_image_raw_mask,final_image_all_steps])
-            [dino_score_normal,dino_score_unmasked, dino_score_seg_mask, dino_score_raw_mask,dino_score_all_steps]=dino_metric.get_scores(ip_adapter_image, [final_image_normal,final_image_unmasked,final_image_seg_mask,final_image_raw_mask,final_image_all_steps])
+            [_,text_score_normal,text_score_unmasked, text_score_raw_mask,text_score_all_steps]=logits_per_text
+            [_,image_score_normal,image_score_unmasked, image_score_raw_mask,image_score_all_steps]=image_similarities
+            #[ir_score_normal,ir_score_unmasked, ir_score_raw_mask,ir_score_all_steps]=ir_model.score(prompt,[final_image_normal,final_image_unmasked,final_image_raw_mask,final_image_all_steps])
+            [dino_score_normal,dino_score_unmasked, dino_score_raw_mask,dino_score_all_steps]=dino_metric.get_scores(ip_adapter_image, [final_image_normal,final_image_unmasked,final_image_raw_mask,final_image_all_steps])
 
             original_tensor=to_tensor(ip_adapter_image.convert("RGB").resize((args.dim,args.dim)))
             variant_image_mask_dict={
                 "normal":(final_image_normal,mask),
                 "unmasked":(final_image_unmasked,mask),
-                "seg_mask":(final_image_seg_mask,map_mask),
                 "raw_mask":(final_image_raw_mask,mask),
                 "all_steps":(final_image_all_steps,mask),
             }
@@ -432,17 +369,14 @@ def main(args):
 
             score_dict={
                 "dino_score_unmasked":dino_score_unmasked,
-                "dino_score_seg_mask":dino_score_seg_mask,
                 "dino_score_raw_mask":dino_score_raw_mask,
                 "dino_score_normal":dino_score_normal,
                 "dino_score_all_steps":dino_score_all_steps,
                 "text_score_unmasked":text_score_unmasked,
-                "text_score_seg_mask":text_score_seg_mask,
                 "text_score_raw_mask":text_score_raw_mask,
                 "text_score_normal":text_score_normal,
                 "text_score_all_steps":text_score_all_steps,
                 "image_score_unmasked":image_score_unmasked,
-                "image_score_seg_mask":image_score_seg_mask,
                 "image_score_raw_mask":image_score_raw_mask,
                 "image_score_normal":image_score_normal,
                 "image_score_all_steps":image_score_all_steps
@@ -461,7 +395,7 @@ def main(args):
 
             if args.background:
                 inputs = processor(
-                text=[prompt], images=[background_image,final_image_normal,final_image_unmasked,final_image_seg_mask,final_image_raw_mask,final_image_all_steps], return_tensors="pt", padding=True
+                text=[prompt], images=[background_image,final_image_normal,final_image_unmasked,final_image_raw_mask,final_image_all_steps], return_tensors="pt", padding=True
                 )
                 outputs = clip_model(**inputs)
 
@@ -470,16 +404,15 @@ def main(args):
                 logits_per_text=torch.matmul(text_embeds, image_embeds.t())[0]
 
                 image_similarities=torch.matmul(image_embeds,image_embeds.t()).numpy()[0]
-                [_,text_score_normal,text_score_unmasked, text_score_seg_mask, text_score_raw_mask,text_score_all_steps]=logits_per_text
-                [_,image_score_normal,image_score_unmasked, image_score_seg_mask, image_score_raw_mask,image_score_all_steps]=image_similarities
-                #[ir_score_normal,ir_score_unmasked, ir_score_seg_mask, ir_score_raw_mask,ir_score_all_steps]=ir_model.score(prompt,[final_image_normal,final_image_unmasked,final_image_seg_mask,final_image_raw_mask,final_image_all_steps])
+                [_,text_score_normal,text_score_unmasked, text_score_raw_mask,text_score_all_steps]=logits_per_text
+                [_,image_score_normal,image_score_unmasked, image_score_raw_mask,image_score_all_steps]=image_similarities
+                #[ir_score_normal,ir_score_unmasked, ir_score_raw_mask,ir_score_all_steps]=ir_model.score(prompt,[final_image_normal,final_image_unmasked,final_image_raw_mask,final_image_all_steps])
 
 
-                
+
 
                 score_dict={
                     "image_score_unmasked":image_score_unmasked,
-                    "image_score_seg_mask":image_score_seg_mask,
                     "image_score_raw_mask":image_score_raw_mask,
                     "image_score_normal":image_score_normal,
                     "image_score_all_steps":image_score_all_steps
