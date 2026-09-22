@@ -210,6 +210,22 @@ class ScoreTracker:
 
         return ret
 
+def get_pipe(accelerator:Accelerator,initial_ip_adapter_scale:float)->CompatibleLatentConsistencyModelPipeline:
+    pipe = CompatibleLatentConsistencyModelPipeline.from_pretrained(
+                "SimianLuo/LCM_Dreamshaper_v7",
+                torch_dtype=torch.float16,
+    ).to(accelerator.device)
+
+    # Load IP-Adapter
+    pipe.load_ip_adapter("h94/IP-Adapter", subfolder="models", weight_name="ip-adapter_sd15.bin")
+    set_ip_adapter_scale_monkey(pipe,initial_ip_adapter_scale)
+
+    setattr(pipe,"safety_checker",None)
+
+    insert_monkey(pipe)
+    
+    return pipe
+
 def main(args):
     with torch.no_grad():
         #ir_model=RM.load("ImageReward-v1.0")
@@ -234,18 +250,8 @@ def main(args):
         if args.final_adapter_steps_list is None:
             args.final_adapter_steps_list=args.final_mask_steps_list
 
-        pipe = CompatibleLatentConsistencyModelPipeline.from_pretrained(
-            "SimianLuo/LCM_Dreamshaper_v7",
-            torch_dtype=torch.float16,
-        ).to(accelerator.device)
-
-        # Load IP-Adapter
-        pipe.load_ip_adapter("h94/IP-Adapter", subfolder="models", weight_name="ip-adapter_sd15.bin")
-        set_ip_adapter_scale_monkey(pipe,args.initial_ip_adapter_scale)
-
-        setattr(pipe,"safety_checker",None)
-
-        insert_monkey(pipe)
+        pipe=get_pipe(accelerator,args.initial_ip_adapter_scale)
+        
         attn_list=get_modules_of_types(pipe.unet,Attention)
 
         #monkey_attn_list=get_modules_of_types(pipe.unet,MonkeyIPAttnProcessor)
