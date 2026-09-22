@@ -34,7 +34,6 @@ from diffusers.models.attention_processor import Attention
 sys.path.append(os.path.dirname(__file__))
 from ipattn import MonkeyIPAttnProcessor, get_modules_of_types, reset_monkey, insert_monkey, set_ip_adapter_scale_monkey
 from pipelines import CompatibleLatentConsistencyModelPipeline
-from custom_sam_detector import CustomSamDetector
 import datasets
 from transformers import AutoProcessor, CLIPModel
 from eval_helpers import DinoMetric
@@ -88,8 +87,8 @@ class FailureAnalyzer:
                  lpips_model=None, device="cuda",
                  attn_list=None, layer_index=15, token=1, dim=256,
                  threshold=0.5, initial_steps=4, final_steps=8,
-                 initial_ip_adapter_scale=0.75, overlap_frac=0.8, kv_type="ip",
-                 custom_sam=None, mask_type="raw", default_object="character"):
+                 initial_ip_adapter_scale=0.75, kv_type="ip",
+                 default_object="character"):
         """
         Args:
             pipe: Diffusion pipeline (must already have insert_monkey(pipe) applied)
@@ -101,9 +100,7 @@ class FailureAnalyzer:
             device: Device to use
             attn_list: modules_of_types(pipe.unet, Attention) list, needed for masked generation
             layer_index, token, dim, threshold, initial_steps, final_steps,
-            initial_ip_adapter_scale, overlap_frac, kv_type: same masking
-                hyperparameters as main_seg.py
-            custom_sam: optional CustomSamDetector, needed only for mask_type="seg"
+            initial_ip_adapter_scale, kv_type: same masking hyperparameters as main_seg.py
         """
         self.pipe = pipe
         self.accelerator = accelerator
@@ -121,10 +118,7 @@ class FailureAnalyzer:
         self.initial_steps = initial_steps
         self.final_steps = final_steps
         self.initial_ip_adapter_scale = initial_ip_adapter_scale
-        self.overlap_frac = overlap_frac
         self.kv_type = kv_type
-        self.custom_sam = custom_sam
-        self.mask_type = mask_type
         self.default_object = default_object
         self.mask_processor = IPAdapterMaskProcessor()
 
@@ -132,11 +126,9 @@ class FailureAnalyzer:
         self.clip_score_threshold = 0.2  # Below this = poor text alignment
         self.dino_score_threshold = 0.3  # Below this = poor subject preservation
         self.lpips_threshold = 0.5  # Above this = significant degradation
-        self.sam_detection_failure = 0  # No detections
-        
+
         # Collect failures
         self.failures: Dict[str, List[FailureExample]] = {
-            "sam_no_detection": [],
             "subject_degradation": [],
             "prompt_ignored": [],
             "background_artifacts": [],
@@ -193,9 +185,9 @@ class FailureAnalyzer:
         try:
             masked_img = self._generate_image(
                 ip_adapter_image, prompt,
-                use_mask=True, mask_type=self.mask_type
+                use_mask=True
             )
-            
+
             # Unmasked version
             unmasked_img = self._generate_image(
                 ip_adapter_image, prompt,
@@ -204,66 +196,38 @@ class FailureAnalyzer:
         except Exception as e:
             logger.warning(f"Generation failed for sample {sample_id}: {e}")
             return
-        
+
         # Check for failures
-        
-        # 1. SAM Segmentation Failure
-        sam_failure = self._check_sam_failure(ip_adapter_image, sample_id, output_dir)
-        if sam_failure:
-            return  # Skip if SAM fails - can't evaluate mask quality
-        
-        # 2. Subject Degradation (LPIPS in subject region)
+
+        # 1. Subject Degradation (LPIPS in subject region)
         degr_failure = self._check_subject_degradation(
             ip_adapter_image, masked_img, sample_id, output_dir
         )
         if degr_failure:
             self.failures["subject_degradation"].append(degr_failure)
         
-        # 3. Prompt Ignored (low CLIP score)
+        # 2. Prompt Ignored (low CLIP score)
         prompt_failure = self._check_prompt_ignored(
             masked_img, unmasked_img, prompt, sample_id, output_dir
         )
         if prompt_failure:
             self.failures["prompt_ignored"].append(prompt_failure)
-        
-        # 4. Background Artifacts (DINO inconsistency)
+
+        # 3. Background Artifacts (DINO inconsistency)
         artifact_failure = self._check_background_artifacts(
             ip_adapter_image, masked_img, sample_id, output_dir
         )
         if artifact_failure:
             self.failures["background_artifacts"].append(artifact_failure)
-        
-        # 5. Low Quality Generation (multiple metrics)
+
+        # 4. Low Quality Generation (multiple metrics)
         quality_failure = self._check_low_quality(
             masked_img, unmasked_img, prompt, sample_id, output_dir
         )
         if quality_failure:
             self.failures["low_quality_generation"].append(quality_failure)
-    
-    def _check_sam_failure(self, image: Image.Image, sample_id: int, 
-                           output_dir: Path) -> Optional[FailureExample]:
-        """Check if SAM segmentation fails on this image"""
-        try:
-            from custom_sam_detector import CustomSamDetector
-            
-            # Assuming custom_sam is available
-            # segmented, annotations = custom_sam(image)
-            
-            # Simplified: check if object detection fails
-            # In practice, you'd call your SAM detector
-            
-            return None  # No failure detected
-        except Exception as e:
-            failure = FailureExample(
-                sample_id=sample_id,
-                failure_type="sam_no_detection",
-                severity=1.0,
-                reason=f"SAM segmentation failed: {str(e)}",
-            )
-            self.failures["sam_no_detection"].append(failure)
-            return failure
-    
-    def _check_subject_degradation(self, original: Image.Image, 
+
+    def _check_subject_degradation(self, original: Image.Image,
                                     masked: Image.Image, 
                                     sample_id: int,
                                     output_dir: Path) -> Optional[FailureExample]:
@@ -433,7 +397,7 @@ class FailureAnalyzer:
         return None
     
     def _generate_image(self, ip_adapter_image: Image.Image, prompt: str,
-                        use_mask: bool = False, mask_type: str = "raw") -> Image.Image:
+                        use_mask: bool = False) -> Image.Image:
         """
         Generate image with or without masking, using the same monkey-patched,
         attention-mask-guided IP-Adapter mechanism as main_seg.py.
@@ -475,25 +439,7 @@ class FailureAnalyzer:
         mask = F.interpolate(mask.unsqueeze(0).unsqueeze(0), size=(self.dim, self.dim), mode="nearest").squeeze(0).squeeze(0)
         mask[mask > 1] = 1.
 
-        if mask_type == "seg":
-            if self.custom_sam is None:
-                raise ValueError("custom_sam must be provided to FailureAnalyzer for mask_type='seg'")
-            _, map_list = self.custom_sam(initial_image, detect_resolution=self.dim)
-            mask_cpu = mask.cpu()
-            final_mask = torch.zeros((self.dim, self.dim))
-            for ann in map_list:
-                map_ = torch.from_numpy(ann["segmentation"]).cpu()
-                n_ones = map_.sum()
-                merged = map_ * mask_cpu
-                if merged.sum() >= self.overlap_frac * n_ones:
-                    final_mask = torch.max(map_, final_mask)
-            for _ in range(2):
-                if len(final_mask.size()) > 2:
-                    final_mask = final_mask.squeeze(0)
-        else:
-            final_mask = mask
-
-        ip_mask = self.mask_processor.preprocess(final_mask)
+        ip_mask = self.mask_processor.preprocess(mask)
 
         final_mask_step_list = quarter_trim_step_list(self.final_steps)
         scale_step_dict = {i: 0 for i in range(self.final_steps)}
@@ -668,7 +614,6 @@ if __name__ == "__main__":
     parser.add_argument("--src_dataset",type=str, default="jlbaker361/ssl-league_captioned_splash-1000-sana")
     parser.add_argument("--num_samples",type=int,default=100)
     parser.add_argument("--object",type=str,default="character")
-    parser.add_argument("--mask_type",type=str,default="raw",help="raw or seg")
     parser.add_argument("--initial_steps",type=int,default=4)
     parser.add_argument("--final_steps",type=int,default=8)
     parser.add_argument("--initial_ip_adapter_scale",type=float,default=0.75)
@@ -676,7 +621,6 @@ if __name__ == "__main__":
     parser.add_argument("--token",type=int,default=1)
     parser.add_argument("--dim",type=int,default=256)
     parser.add_argument("--threshold",type=float,default=0.5)
-    parser.add_argument("--overlap_frac",type=float,default=0.8)
     parser.add_argument("--kv_type",type=str,default="ip")
     parser.add_argument("--output_dir",type=str,default="failure_analysis")
     args=parser.parse_args()
@@ -697,10 +641,6 @@ if __name__ == "__main__":
 
     insert_monkey(pipe)
     attn_list=get_modules_of_types(pipe.unet,Attention)
-
-    custom_sam=None
-    if args.mask_type=="seg":
-        custom_sam=CustomSamDetector.from_pretrained("ybelkada/segment-anything", subfolder="checkpoints").to(accelerator.device)
 
     try:
         data=datasets.load_dataset(args.src_dataset)
@@ -723,10 +663,7 @@ if __name__ == "__main__":
         initial_steps=args.initial_steps,
         final_steps=args.final_steps,
         initial_ip_adapter_scale=args.initial_ip_adapter_scale,
-        overlap_frac=args.overlap_frac,
         kv_type=args.kv_type,
-        custom_sam=custom_sam,
-        mask_type=args.mask_type,
         default_object=args.object,
     )
 

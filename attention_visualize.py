@@ -40,7 +40,6 @@ from diffusers.models.attention_processor import Attention
 sys.path.append(os.path.dirname(__file__))
 from ipattn import MonkeyIPAttnProcessor, get_modules_of_types, reset_monkey, insert_monkey, set_ip_adapter_scale_monkey
 from pipelines import CompatibleLatentConsistencyModelPipeline
-from custom_sam_detector import CustomSamDetector
 import datasets
 from prompt_list import real_test_prompt_list
 
@@ -229,24 +228,22 @@ class AttentionVisualizer:
         
         logger.info(f"Saved steps grid: {prefix}_all_steps_grid.png")
     
-    def create_mechanism_explanation(self, image: Image.Image, 
+    def create_mechanism_explanation(self, image: Image.Image,
                                      mask: torch.Tensor,
                                      initial_generation: Image.Image,
                                      raw_mask_generation: Image.Image,
-                                     seg_mask_generation: Image.Image,
                                      unmasked_generation: Image.Image,
                                      prompt: str = "in a beautiful landscape"):
         """
         Create a comprehensive figure explaining the mechanism
-        
+
         Shows the pipeline: Original → Attention → Mask → Final Output
-        
+
         Args:
             image: Source IP-Adapter image
             mask: Derived mask (torch tensor or PIL)
             initial_generation: First pass generation (to extract mask)
             raw_mask_generation: Using raw attention-based mask
-            seg_mask_generation: Using SAM-guided mask
             unmasked_generation: Without masking (baseline)
             prompt: Text prompt used
         """
@@ -319,38 +316,29 @@ class AttentionVisualizer:
         ax11.imshow(raw_mask_generation)
         ax11.set_title('With Raw Mask\n(Attention-based)', fontsize=11, fontweight='bold')
         ax11.axis('off')
-        
-        ax12 = fig.add_subplot(gs[2, 2])
-        ax12.imshow(seg_mask_generation)
-        ax12.set_title('With Seg Mask\n(SAM-refined)', fontsize=11, fontweight='bold')
-        ax12.axis('off')
-        
+
         # Text explanation
-        ax13 = fig.add_subplot(gs[2, 3:])
+        ax13 = fig.add_subplot(gs[2, 2:])
         explanation = f"""
         Pipeline Explanation:
-        
+
         1. INITIAL PASS: Generate with IP-Adapter (4 steps)
            • Extract IP-Adapter attention weights
-           
+
         2. MASK DERIVATION: Create mask from attention
            • Take IP-Adapter's learned focus region
            • Normalize to 0-1 range
            • Threshold to binary mask
-           
-        3. MASK REFINEMENT (Optional): Use SAM segmentation
-           • Refine mask with semantic segmentation
-           • Improves boundary quality
-           
-        4. SECOND PASS: Generate with masked IP-Adapter
+
+        3. SECOND PASS: Generate with masked IP-Adapter
            • Apply mask to restrict IP-Adapter tokens
            • Subject stays focused on original
            • Text prompt free to modify background
-           
+
         Result: Subject preservation + Prompt alignment!
         Prompt: "{prompt[:50]}..."
         """
-        
+
         ax13.text(0.05, 0.95, explanation, transform=ax13.transAxes,
                  fontsize=10, verticalalignment='top', family='monospace',
                  bbox=dict(boxstyle='round', facecolor='wheat', alpha=0.5))
@@ -548,7 +536,6 @@ if __name__ == "__main__":
     parser.add_argument("--token",type=int,default=1)
     parser.add_argument("--dim",type=int,default=256)
     parser.add_argument("--threshold",type=float,default=0.5)
-    parser.add_argument("--overlap_frac",type=float,default=0.8)
     parser.add_argument("--kv_type",type=str,default="ip")
     parser.add_argument("--output_dir",type=str,default="attention_visualization")
     args=parser.parse_args()
@@ -566,7 +553,6 @@ if __name__ == "__main__":
     insert_monkey(pipe)
     attn_list=get_modules_of_types(pipe.unet,Attention)
     mask_processor=IPAdapterMaskProcessor()
-    custom_sam=CustomSamDetector.from_pretrained("ybelkada/segment-anything", subfolder="checkpoints").to(accelerator.device)
 
     try:
         data=datasets.load_dataset(args.src_dataset)
@@ -617,27 +603,7 @@ if __name__ == "__main__":
         unmasked_image=pipe(prompt,args.dim,args.dim,args.final_steps,ip_adapter_image=ip_adapter_image,generator=generator,
                              scale_step_dict=scale_step_dict).images[0]
 
-        # SAM-refined mask pass
-        segmented_image,map_list=custom_sam(initial_image,detect_resolution=args.dim)
         mask_cpu=mask.cpu()
-        map_mask=torch.zeros((args.dim,args.dim))
-        for ann in map_list:
-            map_=torch.from_numpy(ann["segmentation"]).cpu()
-            n_ones=map_.sum()
-            merged=map_*mask_cpu
-            if merged.sum()>=args.overlap_frac*n_ones:
-                map_mask=torch.max(map_,map_mask)
-        for _ in range(2):
-            if len(map_mask.size())>2:
-                map_mask=map_mask.squeeze(0)
-        ip_map_mask=mask_processor.preprocess(map_mask)
-
-        generator=torch.Generator()
-        generator.manual_seed(123)
-        set_ip_adapter_scale_monkey(pipe,1.0)
-        seg_mask_image=pipe(prompt,args.dim,args.dim,args.final_steps,ip_adapter_image=ip_adapter_image,generator=generator,cross_attention_kwargs={
-            "ip_adapter_masks":ip_map_mask
-        }, mask_step_list=final_mask_step_list,scale_step_dict=scale_step_dict).images[0]
 
     visualizer=AttentionVisualizer(output_dir=args.output_dir)
 
@@ -655,14 +621,13 @@ if __name__ == "__main__":
         mask=mask_cpu,
         initial_generation=initial_image,
         raw_mask_generation=raw_mask_image,
-        seg_mask_generation=seg_mask_image,
         unmasked_generation=unmasked_image,
         prompt=prompt,
     )
 
     visualizer.create_comparison_triplet(
-        resized_source, unmasked_image, raw_mask_image, seg_mask_image,
-        labels=["Unmasked","Raw Mask","Seg Mask"],
+        resized_source, initial_image, unmasked_image, raw_mask_image,
+        labels=["Initial Pass","Unmasked","Raw Mask"],
         save_name="comparison_triplet"
     )
 
