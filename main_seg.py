@@ -89,6 +89,92 @@ def get_mask(layer_index:int,
 
     return avg
 
+def generate_monkey_image(pipe,
+                           attn_list:list,
+                           mask_processor:IPAdapterMaskProcessor,
+                           ip_adapter_image,
+                           prompt:str,
+                           dim:int=256,
+                           initial_steps:int=4,
+                           final_steps:int=8,
+                           initial_mask_step_list:list=None,
+                           final_mask_steps_list:list=None,
+                           final_adapter_steps_list:list=None,
+                           layer_index:int=15,
+                           token:int=1,
+                           threshold:float=0.5,
+                           kv_type:str="ip",
+                           initial_ip_adapter_scale:float=0.75,
+                           background_image=None,
+                           seed:int=123) -> dict:
+    """
+    Runs the core monkey masked-IP-Adapter generation for a single (image,prompt) pair:
+    1) a low-scale initial pass to derive the IP-Adapter attention mask,
+    2) a final pass that applies that mask over `final_mask_steps_list`.
+
+    Returns a dict with initial_image, mask, mask_pil, masked_img, tiny_mask_pil,
+    ip_mask, scale_step_dict, mask_step_list, ip_adapter_image_list and final_image.
+    """
+    reset_monkey(pipe)
+
+    if initial_mask_step_list is None:
+        initial_quarter=initial_steps//4
+        initial_mask_step_list=[f for f in range(initial_steps)][initial_quarter:-initial_quarter]
+    if final_mask_steps_list is None:
+        final_quarter=final_steps//4
+        final_mask_steps_list=[f for f in range(final_steps)][final_quarter:-final_quarter]
+    if final_adapter_steps_list is None:
+        final_adapter_steps_list=final_mask_steps_list
+
+    generator=torch.Generator()
+    generator.manual_seed(seed)
+    set_ip_adapter_scale_monkey(pipe,initial_ip_adapter_scale)
+    initial_image=pipe(prompt,dim,dim,initial_steps,ip_adapter_image=ip_adapter_image,generator=generator).images[0]
+
+    mask=sum([get_mask(layer_index,attn_list,step,token,dim,threshold,kv_type) for step in initial_mask_step_list])
+    tiny_mask_pil=to_pil_image(1-mask.clone())
+
+    mask=F.interpolate(mask.unsqueeze(0).unsqueeze(0), size=(dim, dim), mode="nearest").squeeze(0).squeeze(0)
+
+    mask_pil=to_pil_image(1-mask)
+    color_rgba = initial_image.convert("RGB")
+    mask_pil_rgb = mask_pil.convert("RGB")
+    masked_img=Image.blend(color_rgba, mask_pil_rgb, 0.5)
+
+    mask[mask>1]=1.
+    inverted_mask=1.0-mask
+
+    generator=torch.Generator()
+    generator.manual_seed(seed)
+    mask_step_list=final_mask_steps_list
+    scale_step_dict={i:0 for i in range(final_steps)}
+    for k in final_adapter_steps_list:
+        scale_step_dict[k]=1.0
+
+    ip_adapter_image_list=ip_adapter_image
+    ip_mask=mask_processor.preprocess(mask)
+    if background_image is not None:
+        ip_adapter_image_list=[[ip_adapter_image, background_image]]
+        ip_mask=mask_processor.preprocess([mask,inverted_mask])
+        ip_mask=[ip_mask.reshape([1,ip_mask.shape[0],ip_mask.shape[2], ip_mask.shape[3]])]
+
+    final_image=pipe(prompt,dim,dim,final_steps,ip_adapter_image=ip_adapter_image_list,generator=generator,cross_attention_kwargs={
+        "ip_adapter_masks":ip_mask
+    }, mask_step_list=mask_step_list,scale_step_dict=scale_step_dict).images[0]
+
+    return {
+        "initial_image":initial_image,
+        "mask":mask,
+        "mask_pil":mask_pil,
+        "masked_img":masked_img,
+        "tiny_mask_pil":tiny_mask_pil,
+        "ip_mask":ip_mask,
+        "scale_step_dict":scale_step_dict,
+        "mask_step_list":mask_step_list,
+        "ip_adapter_image_list":ip_adapter_image_list,
+        "final_image":final_image,
+    }
+
 SUBJECT_PRESERVATION_VARIANTS=["unmasked","raw_mask","normal","all_steps"]
 SUBJECT_PRESERVATION_METRIC_NAMES=["subject_preservation","background_divergence","trade_off_ratio","total_lpips"]
 
@@ -189,50 +275,43 @@ def main(args):
         "prompt":[]
         }
 
+        mask_processor = IPAdapterMaskProcessor()
+
         for k,row in enumerate(data):
             if k==args.limit:
                 break
-            reset_monkey(pipe)
             ip_adapter_image=row["image"]
             object=row.get("object",row.get("text",args.object))
             prompt=object+real_test_prompt_list[k % len(real_test_prompt_list)]
             if args.background:
                 background_image=background_dict[prompt.replace(object,"")]
                 prompt=" "
-            generator=torch.Generator()
-            generator.manual_seed(123)
-            set_ip_adapter_scale_monkey(pipe,0.5)
-            accelerator.print("inital image")
-            initial_image=pipe(prompt,args.dim,args.dim,args.initial_steps,ip_adapter_image=ip_adapter_image,generator=generator).images[0]
 
-            mask=sum([get_mask(args.layer_index,attn_list,step,args.token,args.dim,args.threshold) for step in args.initial_mask_step_list])
-            tiny_mask=mask.clone()
-            tiny_mask_pil=to_pil_image(1-tiny_mask)
-            #print("mask size",mask.size())
+            accelerator.print("generating monkey image")
+            gen_out=generate_monkey_image(pipe,attn_list,mask_processor,ip_adapter_image,prompt,
+                                           dim=args.dim,
+                                           initial_steps=args.initial_steps,
+                                           final_steps=args.final_steps,
+                                           initial_mask_step_list=args.initial_mask_step_list,
+                                           final_mask_steps_list=args.final_mask_steps_list,
+                                           final_adapter_steps_list=args.final_adapter_steps_list,
+                                           layer_index=args.layer_index,
+                                           token=args.token,
+                                           threshold=args.threshold,
+                                           kv_type=args.kv_type,
+                                           initial_ip_adapter_scale=args.initial_ip_adapter_scale,
+                                           background_image=background_image if args.background else None)
 
-            mask=F.interpolate(mask.unsqueeze(0).unsqueeze(0), size=(args.dim, args.dim), mode="nearest").squeeze(0).squeeze(0)
-
-            
-
-            mask_pil=to_pil_image(1-mask)
-            color_rgba = initial_image.convert("RGB")
-            mask_pil = mask_pil.convert("RGB")  # must be single channel for alpha
-
-            #print(mask.size,color_rgba.size)
-
-            # Apply as alpha (translucent mask)
-            masked_img=Image.blend(color_rgba, mask_pil, 0.5)
-
-            mask[mask>1]=1.
-            inverted_mask=1.0-mask
-            #mask=1-mask
-            #print(mask.size())
-            mask_processor = IPAdapterMaskProcessor()
-            #print(mask_processor.config)
-            '''mask = mask_processor.preprocess(mask)
-            inverted_mask=mask_processor.preprocess(inverted_mask)'''
-            #print(mask.size())
-            #print("mask size",mask.size())
+            initial_image=gen_out["initial_image"]
+            mask=gen_out["mask"]
+            mask_pil=gen_out["mask_pil"]
+            masked_img=gen_out["masked_img"]
+            tiny_mask_pil=gen_out["tiny_mask_pil"]
+            ip_mask=gen_out["ip_mask"]
+            scale_step_dict=gen_out["scale_step_dict"]
+            mask_step_list=gen_out["mask_step_list"]
+            ip_adapter_image_list=gen_out["ip_adapter_image_list"]
+            final_image_raw_mask=gen_out["final_image"]
 
             masked_list=[]
             for index,[name,module] in enumerate(attn_list):
@@ -260,27 +339,8 @@ def main(args):
                 "first_concat":wandb.Image(first_concat)
             })
 
-            generator=torch.Generator()
-            generator.manual_seed(123)
-            mask_step_list=args.final_mask_steps_list        
-            scale_step_dict={i:0  for i in range(args.final_steps) }
             accelerator.print("mask step list",mask_step_list)
-            
-            for k in args.final_adapter_steps_list:
-                scale_step_dict[k]=1.0
             accelerator.print("scale step dict",scale_step_dict)
-            ip_adapter_image_list=ip_adapter_image
-            ip_mask=mask_processor.preprocess(mask)
-            if args.background:
-                ip_adapter_image_list=[[ip_adapter_image, background_image]]
-                ip_mask=mask_processor.preprocess([mask,inverted_mask])
-                accelerator.print('ip_mask.size()',ip_mask.size())
-                ip_mask=[ip_mask.reshape([1,ip_mask.shape[0],ip_mask.shape[2], ip_mask.shape[3]])]
-                
-            accelerator.print("final image raw mask")
-            final_image_raw_mask=pipe(prompt,args.dim,args.dim,args.final_steps,ip_adapter_image=ip_adapter_image_list,generator=generator,cross_attention_kwargs={
-                "ip_adapter_masks":ip_mask
-            }, mask_step_list=mask_step_list,scale_step_dict=scale_step_dict).images[0]
 
             generator=torch.Generator()
             generator.manual_seed(123)
